@@ -151,6 +151,265 @@ Tengo este error al correr la aplicación, analízalo y corrígelo:
 
 ---
 
+## Integración PostgreSQL + Prisma 7 en NestJS
+
+### Instalación
+```bash
+npm install @prisma/client @prisma/adapter-pg
+npm install -D prisma
+```
+
+### Inicializar Prisma
+```bash
+npx prisma init
+```
+Genera automáticamente `prisma/schema.prisma` y `prisma.config.ts`.
+
+### Configuración schema.prisma
+```prisma
+generator client {
+  provider     = "prisma-client"
+  output       = "../generated/prisma"
+  moduleFormat = "commonjs"   # ⚠️ obligatorio para NestJS
+}
+
+datasource db {
+  provider = "postgresql"
+  # ⚠️ NO va url aquí — va en prisma.config.ts
+}
+```
+
+### Configuración prisma.config.ts
+```typescript
+import "dotenv/config";
+import { defineConfig } from "prisma/config";
+
+export default defineConfig({
+  schema: "prisma/schema.prisma",
+  migrations: { path: "prisma/migrations" },
+  datasource: { url: process.env["DATABASE_URL"] },
+});
+```
+
+### .env
+```env
+DATABASE_URL="postgresql://postgres:PASSWORD@localhost:5432/nombre_db"
+```
+
+### Migración y generación del cliente
+```bash
+npx prisma migrate dev --name init
+npx prisma generate   # ⚠️ siempre después de migrate
+```
+
+### PrismaService
+```typescript
+import { Injectable, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
+import { PrismaClient } from '../../generated/prisma/client'; // ⚠️ /client al final
+import { PrismaPg } from '@prisma/adapter-pg';
+
+@Injectable()
+export class PrismaService extends PrismaClient
+  implements OnModuleInit, OnModuleDestroy {
+
+  constructor() {
+    const adapter = new PrismaPg({
+      connectionString: process.env.DATABASE_URL
+    });
+    super({ adapter }); // ⚠️ adapter obligatorio en Prisma 7
+  }
+
+  async onModuleInit() { await this.$connect(); }
+  async onModuleDestroy() { await this.$disconnect(); }
+}
+```
+
+### PrismaModule
+```typescript
+import { Global, Module } from '@nestjs/common';
+import { PrismaService } from './prisma.service';
+
+@Global() // ⚠️ evita importar PrismaModule en cada módulo
+@Module({
+  providers: [PrismaService],
+  exports: [PrismaService],
+})
+export class PrismaModule {}
+```
+
+### Registrar en AppModule
+```typescript
+imports: [
+  ConfigModule.forRoot({ isGlobal: true }),
+  PrismaModule,
+]
+```
+
+### ⚠️ Gotchas Prisma 7
+| # | Gotcha |
+|---|--------|
+| 1 | `moduleFormat = "commonjs"` es obligatorio — sin esto falla con NestJS |
+| 2 | `url` NO va en `schema.prisma` — va en `prisma.config.ts` |
+| 3 | Siempre correr `prisma generate` después de `prisma migrate` |
+| 4 | Import desde `'../../generated/prisma/client'` no desde `@prisma/client` |
+| 5 | `PrismaClient` requiere el adapter en el constructor — ver ejemplo en `generated/prisma/client.ts` |
+
+### 💡 Tip
+Cuando no recuerdes cómo instanciar `PrismaClient`, el archivo
+`generated/prisma/client.ts` siempre tiene el ejemplo correcto.
+
+---
+
+## Comandos útiles en Windows
+
+### Matar un proceso en un puerto específico
+```bash
+# Ver qué proceso está usando el puerto
+netstat -ano | findstr :3000
+
+# Matar el proceso por PID (última columna del comando anterior)
+taskkill /PID <numero> /F
+```
+
+### Equivalencia con Linux/Mac
+```bash
+# Windows: taskkill /PID 1234 /F
+# Linux/Mac: kill -9 1234
+```
+
+---
+
+## Semana 2 - Conectar ProductsService a Prisma
+
+### Cambios en el servicio
+- Eliminar array en memoria y nextId
+- Inyectar PrismaService en el constructor
+- Todos los métodos pasan a ser async
+- Eliminar product.interface.ts (Prisma infiere los tipos)
+
+### Patrón del servicio
+```typescript
+@Injectable()
+export class ProductsService {
+  constructor(private readonly prisma: PrismaService) {}
+
+  async findAll() {
+    return this.prisma.product.findMany();
+  }
+
+  async findOne(id: number) {
+    const product = await this.prisma.product.findUnique({ where: { id } });
+    if (!product) throw new NotFoundException(`Producto con id ${id} no encontrado`);
+    return product;
+  }
+
+  async create(data: CreateProductDto) {
+    return this.prisma.product.create({ data });
+  }
+
+  async replace(id: number, data: ReplaceProductDto) {
+    await this.findOne(id);  // valida existencia primero
+    return this.prisma.product.update({ where: { id }, data });
+  }
+
+  async patch(id: number, data: UpdateProductDto) {
+    await this.findOne(id);  // valida existencia primero
+    return this.prisma.product.update({ where: { id }, data });
+  }
+
+  async remove(id: number): Promise<void> {
+    await this.findOne(id);  // valida existencia primero
+    await this.prisma.product.delete({ where: { id } });
+  }
+}
+```
+
+### Cambios en el controller
+- Eliminar import de Product interface
+- Todos los métodos async
+- Sin tipos de retorno explícitos — TypeScript los infiere desde Prisma
+
+### 💡 Tips
+- `findOne` antes de `update`/`delete` garantiza el mismo
+  formato de error en toda la app
+- Al usar `@Global()` en PrismaModule no necesitas importarlo
+  en cada módulo
+- Prisma genera el `id` automáticamente — no necesitas nextId manual
+
+---
+
+## Semana 2 - Relaciones One to Many con Prisma 7
+
+### Concepto
+La llave foránea (FK) siempre vive en el lado "muchos".
+Ejemplo: un Product pertenece a una Category → categoryId vive en Product.
+
+### Schema
+```prisma
+model Category {
+  id       Int       @id @default(autoincrement())
+  name     String    @unique
+  products Product[] // relación inversa — virtual, no crea columna en DB
+}
+
+model Product {
+  id          Int      @id @default(autoincrement())
+  name        String
+  description String
+  stock       Int
+  price       Float
+  categoryId  Int
+  category    Category @relation(fields: [categoryId], references: [id])
+}
+```
+
+### Migración
+```bash
+npx prisma migrate dev --name add-categories
+npx prisma generate
+```
+
+### ⚠️ Gotchas
+| # | Gotcha |
+|---|--------|
+| 1 | `products Product[]` en Category es virtual — no genera columna en DB |
+| 2 | Si hay datos existentes con el campo nuevo obligatorio, la migración falla — usar `Int?` o limpiar la DB primero |
+| 3 | El `autoincrement` no se resetea al borrar registros — es comportamiento correcto |
+| 4 | Sin `categoryId` en el body el validador rechaza con 400 |
+
+### Flujo de creación con relación
+```json
+// 1. Primero crear la categoría
+POST /categories
+{ "name": "Electrónica" }
+
+// 2. Luego crear el producto con categoryId
+POST /products
+{
+  "name": "Laptop",
+  "description": "Laptop gamer 16GB RAM",
+  "price": 1200,
+  "stock": 10,
+  "categoryId": 1
+}
+```
+
+### Próximo paso — queries con include
+```typescript
+// Traer producto CON su categoría
+this.prisma.product.findMany({
+  include: { category: true }
+})
+
+// Traer categoría CON todos sus productos
+this.prisma.category.findUnique({
+  where: { id: 1 },
+  include: { products: true }
+})
+```
+
+---
+
 ## Extras
 
 ```

@@ -1,48 +1,39 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import type { Product } from './product.interface';
+import { PrismaService } from '../prisma/prisma.service';
+import { CreateProductDto } from './dto/create-product.dto';
+import { ReplaceProductDto } from './dto/replace-product.dto';
+import { UpdateProductDto } from './dto/update-product.dto';
 
 @Injectable()
 export class ProductsService {
-  private products: Product[] = [
-    { id: 1, name: 'Laptop', description: 'Laptop gamer 16GB RAM', price: 1200, stock: 10 },
-    { id: 2, name: 'Mouse', description: 'Mouse inalámbrico ergonómico', price: 35, stock: 50 },
-    { id: 3, name: 'Teclado', description: 'Teclado mecánico RGB', price: 80, stock: 30 },
-  ];
+  constructor(private readonly prisma: PrismaService) {}
 
-  private nextId = 4;
-
-  findAll(): Product[] {
-    return this.products;
+  async findAll() {
+    return this.prisma.product.findMany();
   }
 
-  findOne(id: number): Product {
-    const product = this.products.find((p) => p.id === id);
+  async findOne(id: number) {
+    const product = await this.prisma.product.findUnique({ where: { id } });
     if (!product) throw new NotFoundException(`Producto con id ${id} no encontrado`);
     return product;
   }
 
-  create(data: Omit<Product, 'id'>): Product {
-    const product: Product = { id: this.nextId++, ...data };
-    this.products.push(product);
-    return product;
+  async create(data: CreateProductDto) {
+    return this.prisma.product.create({ data });
   }
 
-  replace(id: number, data: Omit<Product, 'id'>): Product {
-    const index = this.products.findIndex((p) => p.id === id);
-    if (index === -1) throw new NotFoundException(`Producto con id ${id} no encontrado`);
-    this.products[index] = { id, ...data };
-    return this.products[index];
+  async replace(id: number, data: ReplaceProductDto) {
+    await this.findOne(id);
+    return this.prisma.product.update({ where: { id }, data });
   }
 
-  patch(id: number, data: Partial<Omit<Product, 'id'>>): Product {
-    const product = this.findOne(id);
-    Object.assign(product, data);
-    return product;
+  async patch(id: number, data: UpdateProductDto) {
+    await this.findOne(id);
+    return this.prisma.product.update({ where: { id }, data });
   }
 
-  remove(id: number): void {
-    const index = this.products.findIndex((p) => p.id === id);
-    if (index === -1) throw new NotFoundException(`Producto con id ${id} no encontrado`);
-    this.products.splice(index, 1);
+  async remove(id: number): Promise<void> {
+    await this.findOne(id);
+    await this.prisma.product.delete({ where: { id } });
   }
 }

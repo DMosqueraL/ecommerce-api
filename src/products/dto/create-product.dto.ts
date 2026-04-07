@@ -16,4 +16,8 @@ export class CreateProductDto {
   @IsInt({ message: 'El stock debe ser un número entero' })
   @Min(0, { message: 'El stock no puede ser negativo' })
   stock: number;
+
+  @IsInt({ message: 'El categoryId debe ser un número entero' })
+  @IsPositive({ message: 'El categoryId debe ser mayor a 0' })
+  categoryId: number;
 }
