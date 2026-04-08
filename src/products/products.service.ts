@@ -9,11 +9,11 @@ export class ProductsService {
   constructor(private readonly prisma: PrismaService) {}
 
   async findAll() {
-    return this.prisma.product.findMany();
+    return this.prisma.product.findMany({ include: { category: true } });
   }
 
   async findOne(id: number) {
-    const product = await this.prisma.product.findUnique({ where: { id } });
+    const product = await this.prisma.product.findUnique({ where: { id }, include: { category: true } });
     if (!product) throw new NotFoundException(`Producto con id ${id} no encontrado`);
     return product;
   }

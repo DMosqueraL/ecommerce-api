@@ -394,18 +394,118 @@ POST /products
 }
 ```
 
-### Próximo paso — queries con include
+---
+
+## Semana 2 - Queries con `include` en Prisma 7
+
+### Concepto
+`include` le indica a Prisma que haga un JOIN y devuelva la relación
+anidada dentro del objeto. Sin `include`, solo se devuelven los campos
+escalares (e.g., `categoryId` pero no el objeto `category`).
+
+### Casos de uso habituales
+
 ```typescript
-// Traer producto CON su categoría
+// Todos los productos con su categoría anidada
 this.prisma.product.findMany({
-  include: { category: true }
+  include: { category: true },
 })
 
-// Traer categoría CON todos sus productos
-this.prisma.category.findUnique({
-  where: { id: 1 },
-  include: { products: true }
+// Un producto por id con su categoría
+this.prisma.product.findUnique({
+  where: { id },
+  include: { category: true },
 })
+
+// Una categoría con todos sus productos
+this.prisma.category.findUnique({
+  where: { id },
+  include: { products: true },
+})
+```
+
+### Respuesta resultante
+
+Sin `include`:
+```json
+{ "id": 1, "name": "Laptop", "categoryId": 2, "price": 1200, "stock": 10, "description": "..." }
+```
+
+Con `include: { category: true }`:
+```json
+{
+  "id": 1,
+  "name": "Laptop",
+  "categoryId": 2,
+  "price": 1200,
+  "stock": 10,
+  "description": "...",
+  "category": { "id": 2, "name": "Electrónica" }
+}
+```
+
+### `include` anidado (relaciones de 2+ niveles)
+
+```typescript
+// Categoría → productos → (hipotético) proveedor del producto
+this.prisma.category.findMany({
+  include: {
+    products: {
+      include: { supplier: true },
+    },
+  },
+})
+```
+
+### `select` dentro de `include` (proyección)
+
+Si no quieres devolver todos los campos de la relación:
+
+```typescript
+this.prisma.product.findMany({
+  include: {
+    category: {
+      select: { name: true }, // solo el nombre, no el id
+    },
+  },
+})
+```
+
+### Dónde agregar `include` en el servicio
+
+Agrega `include` únicamente en los métodos de lectura (`findAll`, `findOne`).
+Los métodos de escritura (`create`, `update`, `delete`) no necesitan
+devolver la relación anidada salvo que el cliente lo requiera explícitamente.
+
+```typescript
+async findAll() {
+  return this.prisma.product.findMany({ include: { category: true } });
+}
+
+async findOne(id: number) {
+  const product = await this.prisma.product.findUnique({
+    where: { id },
+    include: { category: true },
+  });
+  if (!product) throw new NotFoundException(`Producto con id ${id} no encontrado`);
+  return product;
+}
+```
+
+### ⚠️ Gotchas
+| # | Gotcha |
+|---|--------|
+| 1 | `include` y `select` son mutuamente excluyentes al mismo nivel — no puedes usarlos juntos en la misma query raíz |
+| 2 | `include: { category: true }` falla en tiempo de compilación si el campo no está definido como relación en el schema |
+| 3 | Incluir relaciones inversas grandes (e.g., `products` en una categoría con miles de productos) puede impactar rendimiento — usa `take`/`skip` o `select` para acotar |
+| 4 | El tipo de retorno de Prisma cambia automáticamente al añadir `include` — TypeScript infiere el tipo extendido sin necesidad de tipos manuales |
+
+### Prompt reutilizable
+
+```
+En src/[entidad]/[entidad].service.ts agrega include: { [relacion]: true }
+a los métodos findAll y findOne para que retornen el objeto
+completo de [relacion] en cada [entidad].
 ```
 
 ---
