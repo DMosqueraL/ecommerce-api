@@ -18,17 +18,25 @@ export class ProductsService {
     return product;
   }
 
+  private async validateCategoryExists(categoryId: number) {
+    const category = await this.prisma.category.findUnique({ where: { id: categoryId } });
+    if (!category) throw new NotFoundException(`Categoría con id ${categoryId} no encontrada`);
+  }
+
   async create(data: CreateProductDto) {
+    await this.validateCategoryExists(data.categoryId);
     return this.prisma.product.create({ data });
   }
 
   async replace(id: number, data: ReplaceProductDto) {
     await this.findOne(id);
+    await this.validateCategoryExists(data.categoryId);
     return this.prisma.product.update({ where: { id }, data });
   }
 
   async patch(id: number, data: UpdateProductDto) {
     await this.findOne(id);
+    if (data.categoryId !== undefined) await this.validateCategoryExists(data.categoryId);
     return this.prisma.product.update({ where: { id }, data });
   }
 
