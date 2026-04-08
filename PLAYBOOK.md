@@ -510,6 +510,89 @@ completo de [relacion] en cada [entidad].
 
 ---
 
+## Semana 2 - Validar FK antes de crear/actualizar
+
+### Problema
+Si se envía un `categoryId` que no existe, Prisma lanza un error de
+constraint a nivel de DB (código P2003). Es mejor interceptarlo antes
+y devolver un 404 claro al cliente.
+
+### Patrón — helper privado en el servicio
+
+```typescript
+private async validateCategoryExists(categoryId: number) {
+  const category = await this.prisma.category.findUnique({ where: { id: categoryId } });
+  if (!category) throw new NotFoundException(`Categoría con id ${categoryId} no encontrada`);
+}
+```
+
+### Dónde llamarlo
+
+```typescript
+async create(data: CreateProductDto) {
+  await this.validateCategoryExists(data.categoryId);       // siempre requerido
+  return this.prisma.product.create({ data });
+}
+
+async replace(id: number, data: ReplaceProductDto) {
+  await this.findOne(id);
+  await this.validateCategoryExists(data.categoryId);       // siempre requerido en PUT
+  return this.prisma.product.update({ where: { id }, data });
+}
+
+async patch(id: number, data: UpdateProductDto) {
+  await this.findOne(id);
+  if (data.categoryId !== undefined)                        // opcional en PATCH
+    await this.validateCategoryExists(data.categoryId);
+  return this.prisma.product.update({ where: { id }, data });
+}
+```
+
+### Regla clave
+En `patch` (PATCH), `categoryId` es opcional — solo validar si viene en el body.
+En `create` y `replace` (POST/PUT), `categoryId` es obligatorio — siempre validar.
+
+### ⚠️ Gotchas
+| # | Gotcha |
+|---|--------|
+| 1 | Sin este helper, Prisma lanza P2003 con un mensaje técnico que llega al cliente como 500 |
+| 2 | El helper usa `findUnique` (no `findFirst`) porque `id` es PK — es más eficiente |
+| 3 | Extraer la validación a un método privado evita duplicar código en `create`, `replace` y `patch` |
+
+### Prompt reutilizable
+
+```
+En src/[entidad]/[entidad].service.ts, en los métodos create, replace y patch,
+valida que [fk_field] exista usando this.prisma.[relacion].findUnique({ where: { id: data.[fk_field] } }).
+Si no existe, lanza NotFoundException con el mensaje "[Entidad] con id ${data.[fk_field]} no encontrada".
+En patch, solo valida si [fk_field] está presente en el body.
+```
+
+---
+
+## Semana 2 - DELETE y 204 No Content
+
+### Comportamiento correcto en el controller
+
+El método `remove` no debe usar `return` — solo `await`:
+
+```typescript
+@Delete(':id')
+@HttpCode(204)
+async remove(@Param('id', ParseIntPipe) id: number) {
+  await this.productsService.remove(id);  // sin return
+}
+```
+
+Sin `return`, NestJS no serializa ningún body y envía la respuesta 204 vacía.
+
+### Lo que ves en Postman
+
+Postman muestra el número de línea del body vacío (e.g. `1`) — **no es un body real**.
+Es el indicador de línea del panel de respuesta vacío. Es comportamiento correcto.
+
+---
+
 ## Extras
 
 ```

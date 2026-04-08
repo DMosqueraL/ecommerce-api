@@ -98,6 +98,10 @@ PUT and PATCH are intentionally distinct: PUT replaces the entire resource, PATC
 
 Data is persisted in PostgreSQL via Prisma. `ProductsService` uses `PrismaService` directly — no repository layer. Each product requires a valid `categoryId`.
 
+`findAll` and `findOne` include `{ category: true }` — every response contains the full category object nested inside the product.
+
+`create`, `replace`, and `patch` validate that `categoryId` exists before writing to the DB. If the category is not found, a `NotFoundException` is thrown (`"Categoría con id ${id} no encontrada"`). In `patch`, the validation is skipped when `categoryId` is not present in the body.
+
 ## Categories module
 
 Endpoints (`/categories`):
