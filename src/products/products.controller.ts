@@ -42,6 +42,6 @@ export class ProductsController {
   @Delete(':id')
   @HttpCode(204)
   async remove(@Param('id', ParseIntPipe) id: number) {
-    return this.productsService.remove(id);
+    await this.productsService.remove(id);
   }
 }
