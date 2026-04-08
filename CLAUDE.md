@@ -40,8 +40,35 @@ Configuration is managed with `@nestjs/config`. Copy `.env.example` to `.env` an
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `PORT` | HTTP port | `3000` |
+| `DATABASE_URL` | PostgreSQL connection string | — |
 
 `.env` is git-ignored. `.env.example` (no values) is committed as reference. `ConfigModule.forRoot({ isGlobal: true })` is registered in `AppModule`, so `ConfigService` is injectable anywhere without reimporting. `main.ts` reads `PORT` via `configService.get<number>('PORT', 3000)`.
+
+## Database
+
+The app uses **Prisma 7** with **PostgreSQL**.
+
+- Schema: `prisma/schema.prisma`
+- Generated client output: `generated/prisma/` (commonjs format)
+- `PrismaService` (`src/prisma/`) wraps the generated client and is provided via `PrismaModule` (global).
+
+Useful Prisma commands:
+
+```bash
+npx prisma migrate dev --name <migration_name>   # Create and apply a migration
+npx prisma migrate deploy                         # Apply pending migrations (prod)
+npx prisma studio                                 # Open visual DB browser
+npx prisma generate                               # Regenerate client after schema change
+```
+
+### Schema models
+
+```
+Category  id (PK), name (unique)
+Product   id (PK), name, description, stock, price, categoryId (FK → Category)
+```
+
+Category → Product is a **One-to-Many** relationship (`categoryId` is required on every product).
 
 ## Architecture
 
@@ -69,7 +96,21 @@ Endpoints (`/products`):
 
 PUT and PATCH are intentionally distinct: PUT replaces the entire resource, PATCH merges only the provided fields.
 
-Data is stored in an in-memory array in `ProductsService` (no database yet).
+Data is persisted in PostgreSQL via Prisma. `ProductsService` uses `PrismaService` directly — no repository layer. Each product requires a valid `categoryId`.
+
+## Categories module
+
+Endpoints (`/categories`):
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/categories` | List all |
+| GET | `/categories/:id` | Get one |
+| POST | `/categories` | Create |
+| PUT | `/categories/:id` | Full replace — all fields required |
+| DELETE | `/categories/:id` | Remove (204) |
+
+`CreateCategoryDto` has a single required field: `name` (unique in DB). `UpdateCategoryDto` uses `PartialType(CreateCategoryDto)`.
 
 ## DTOs and validation
 
