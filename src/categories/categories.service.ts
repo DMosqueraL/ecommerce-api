@@ -8,11 +8,11 @@ export class CategoriesService {
   constructor(private readonly prisma: PrismaService) {}
 
   async findAll() {
-    return this.prisma.category.findMany();
+    return this.prisma.category.findMany({ include: { products: true } });
   }
 
   async findOne(id: number) {
-    const category = await this.prisma.category.findUnique({ where: { id } });
+    const category = await this.prisma.category.findUnique({ where: { id }, include: { products: true } });
     if (!category) throw new NotFoundException(`Categoría con id ${id} no encontrada`);
     return category;
   }
