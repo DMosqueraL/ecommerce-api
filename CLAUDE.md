@@ -42,7 +42,25 @@ Configuration is managed with `@nestjs/config`. Copy `.env.example` to `.env` an
 | `PORT` | HTTP port | `3000` |
 | `DATABASE_URL` | PostgreSQL connection string | — |
 
-`.env` is git-ignored. `.env.example` (no values) is committed as reference. `ConfigModule.forRoot({ isGlobal: true })` is registered in `AppModule`, so `ConfigService` is injectable anywhere without reimporting. `main.ts` reads `PORT` via `configService.get<number>('PORT', 3000)`.
+`.env` is git-ignored. `.env.example` (with placeholder values) is committed as reference. `ConfigModule.forRoot({ isGlobal: true, validationSchema: envValidationSchema })` is registered in `AppModule`, so `ConfigService` is injectable anywhere without reimporting. `main.ts` reads `PORT` via `configService.get<number>('PORT', 3000)`.
+
+### Validation
+
+`src/config/env.validation.ts` defines a Joi schema that runs at startup:
+
+```typescript
+import * as Joi from 'joi';
+
+export const envValidationSchema = Joi.object({
+  PORT: Joi.number().default(3000),
+  DATABASE_URL: Joi.string().required(),
+});
+```
+
+If `DATABASE_URL` is missing the app refuses to start with:
+```
+Error: Config validation error: "DATABASE_URL" is required
+```
 
 ## Database
 
@@ -91,8 +109,9 @@ Category → Product is a **One-to-Many** relationship (`categoryId` is required
 
 Standard NestJS module architecture:
 
-- **`src/main.ts`** — Bootstrap; registers global `HttpExceptionFilter` and `ValidationPipe`; reads `PORT` from `ConfigService`.
-- **`src/app.module.ts`** — Root module; imports `ConfigModule` (global) and feature modules.
+- **`src/main.ts`** — Bootstrap; registers global `HttpExceptionFilter` and `ValidationPipe`; configures SwaggerModule at `/api`; reads `PORT` from `ConfigService`.
+- **`src/app.module.ts`** — Root module; imports `ConfigModule` (global, with Joi validation) and feature modules.
+- **`src/config/env.validation.ts`** — Joi schema for startup env var validation.
 - **`src/common/filters/`** — Global filters shared across the whole app.
 - Feature modules go under `src/<feature>/` following the pattern: `<feature>.module.ts`, `<feature>.controller.ts`, `<feature>.service.ts`, and a `dto/` subfolder.
 
@@ -167,13 +186,19 @@ Endpoints (`/categories`):
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/categories` | List all |
+| GET | `/categories` | List all (paginated) |
 | GET | `/categories/:id` | Get one |
 | POST | `/categories` | Create |
 | PUT | `/categories/:id` | Full replace — all fields required |
 | DELETE | `/categories/:id` | Remove (204) |
 
 `CreateCategoryDto` has a single required field: `name` (unique in DB). `UpdateCategoryDto` uses `PartialType(CreateCategoryDto)`.
+
+`findAll` and `findOne` include `{ products: true }` — every category response contains its full list of products.
+
+### Pagination
+
+`GET /categories` supports the same `page`/`limit` query params as `/products` (defaults: `page=1`, `limit=10`), with the same `{ data, total, page, limit, totalPages }` response shape.
 
 ## DTOs and validation
 
@@ -200,6 +225,29 @@ Validation errors (400) — `errors` array only appears when there are multiple 
 ```json
 { "statusCode": 400, "message": "Error de validación", "errors": ["El nombre del producto es obligatorio"], "timestamp": "...", "path": "..." }
 ```
+
+## Swagger
+
+The interactive API docs are served at `http://localhost:3000/api` (configured in `src/main.ts`):
+
+```typescript
+const config = new DocumentBuilder()
+  .setTitle('Ecommerce API')
+  .setDescription('API para gestión de productos y categorías')
+  .setVersion('1.0')
+  .build();
+SwaggerModule.setup('api', app, SwaggerModule.createDocument(app, config));
+```
+
+### Decorators in use
+
+| Decorator | Location | Purpose |
+|-----------|----------|---------|
+| `@ApiTags('products')` | `ProductsController` | Groups endpoints under the "products" tag |
+| `@ApiTags('categories')` | `CategoriesController` | Groups endpoints under the "categories" tag |
+| `@ApiProperty({ description, example })` | DTO fields | Documents schema fields with descriptions and example values |
+
+`@ApiProperty` is added only to the base `CreateProductDto` and `CreateCategoryDto`. `ReplaceProductDto` and `UpdateProductDto` inherit the decorators automatically via class extension and `PartialType`.
 
 ## TypeScript Configuration
 

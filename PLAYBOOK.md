@@ -801,6 +801,141 @@ En el controller agregar los @Query params con ParseIntPipe/ParseFloatPipe donde
 
 ---
 
+## Swagger en NestJS
+
+### Instalación
+
+```bash
+npm install @nestjs/swagger
+```
+
+### Setup en main.ts
+
+```typescript
+import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
+
+const config = new DocumentBuilder()
+  .setTitle('Ecommerce API')
+  .setDescription('API para gestión de productos y categorías')
+  .setVersion('1.0')
+  .build();
+const document = SwaggerModule.createDocument(app, config);
+SwaggerModule.setup('api', app, document);
+```
+
+La UI queda disponible en `http://localhost:3000/api`.
+
+### Decoradores esenciales
+
+**Agrupar endpoints por tag (en el controller):**
+```typescript
+import { ApiTags } from '@nestjs/swagger';
+
+@ApiTags('products')
+@Controller('products')
+export class ProductsController {}
+```
+
+**Documentar campos de DTO:**
+```typescript
+import { ApiProperty } from '@nestjs/swagger';
+
+export class CreateProductDto {
+  @ApiProperty({ description: 'Nombre del producto', example: 'Laptop gamer' })
+  @IsString()
+  name: string;
+
+  @ApiProperty({ description: 'Precio en COP', example: 2500000 })
+  @IsNumber()
+  price: number;
+}
+```
+
+Solo decorar el DTO base (`CreateDto`). Los DTOs derivados (`ReplaceDto`, `UpdateDto`) heredan `@ApiProperty` automáticamente.
+
+### ⚠️ Gotchas
+| # | Gotcha |
+|---|--------|
+| 1 | `@ApiProperty` va en el DTO base — `PartialType` y `extends` propagan los decoradores |
+| 2 | Sin `@ApiProperty`, Swagger muestra el schema vacío (los campos no aparecen) |
+| 3 | `SwaggerModule.setup` debe ir antes de `app.listen` |
+| 4 | La ruta `'api'` en `setup` se convierte en `/api` — no agregar `/` al inicio |
+
+### Prompt reutilizable
+
+```
+Integra Swagger en este proyecto NestJS:
+1. Instalar @nestjs/swagger
+2. En main.ts configurar SwaggerModule con title, description y version. Ruta: /api
+3. Agregar @ApiTags('[tag]') en los controllers
+4. Agregar @ApiProperty({ description, example }) a todos los campos del DTO base de [entidad]
+```
+
+---
+
+## Validación de variables de entorno con Joi
+
+### Instalación
+
+```bash
+npm install joi
+```
+
+### Crear el schema de validación
+
+`src/config/env.validation.ts`:
+```typescript
+import * as Joi from 'joi';
+
+export const envValidationSchema = Joi.object({
+  PORT: Joi.number().default(3000),
+  DATABASE_URL: Joi.string().required(),
+});
+```
+
+### Conectar al ConfigModule
+
+```typescript
+// src/app.module.ts
+import { envValidationSchema } from './config/env.validation';
+
+ConfigModule.forRoot({
+  isGlobal: true,
+  validationSchema: envValidationSchema,
+}),
+```
+
+### Comportamiento
+
+- Si falta una variable `required`, la app no arranca:
+  ```
+  Error: Config validation error: "DATABASE_URL" is required
+  ```
+- Si `PORT` no viene en el `.env`, Joi aplica el `default(3000)` automáticamente.
+- La validación ocurre antes de que cualquier módulo se inicialice.
+
+### ⚠️ Gotchas
+| # | Gotcha |
+|---|--------|
+| 1 | Importar Joi con `import * as Joi from 'joi'` — no `import Joi from 'joi'` (no tiene default export) |
+| 2 | El schema solo valida las variables declaradas — variables extra se ignoran por defecto |
+| 3 | `Joi.number().default(3000)` aplica el default solo si la variable está ausente; si viene vacía (`PORT=`), Joi la rechaza |
+| 4 | Probar comentando `DATABASE_URL` en `.env` y corriendo la app — debe fallar con mensaje claro |
+
+### Prompt reutilizable
+
+```
+Agrega validación de variables de entorno con Joi:
+1. Instalar joi
+2. Crear src/config/env.validation.ts con schema Joi que valide:
+   - PORT: número, opcional, default 3000
+   - DATABASE_URL: string, obligatorio
+   - [otras vars]: ...
+3. En app.module.ts pasar validationSchema al ConfigModule
+```
+
+---
+
 ## Extras
 
 ```
