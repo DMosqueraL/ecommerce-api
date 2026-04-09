@@ -8,11 +8,30 @@ import { UpdateProductDto } from './dto/update-product.dto';
 export class ProductsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async findAll(page: number = 1, limit: number = 10) {
+  async findAll(
+    page: number = 1,
+    limit: number = 10,
+    categoryId?: number,
+    minPrice?: number,
+    maxPrice?: number,
+    search?: string,
+  ) {
+    const where = {
+      ...(categoryId !== undefined && { categoryId }),
+      ...(minPrice !== undefined || maxPrice !== undefined
+        ? { price: { ...(minPrice !== undefined && { gte: minPrice }), ...(maxPrice !== undefined && { lte: maxPrice }) } }
+        : {}),
+      ...(search !== undefined && {
+        OR: [
+          { name: { contains: search, mode: 'insensitive' as const } },
+          { description: { contains: search, mode: 'insensitive' as const } },
+        ],
+      }),
+    };
     const skip = (page - 1) * limit;
     const [data, total] = await Promise.all([
-      this.prisma.product.findMany({ skip, take: limit, include: { category: true } }),
-      this.prisma.product.count(),
+      this.prisma.product.findMany({ where, skip, take: limit, include: { category: true } }),
+      this.prisma.product.count({ where }),
     ]);
     return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
   }

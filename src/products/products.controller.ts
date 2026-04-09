@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Put, Patch, Delete, Param, Body, ParseIntPipe, HttpCode, Query } from '@nestjs/common';
+import { Controller, Get, Post, Put, Patch, Delete, Param, Body, ParseIntPipe, ParseFloatPipe, HttpCode, Query } from '@nestjs/common';
 import { ProductsService } from './products.service';
 import { CreateProductDto } from './dto/create-product.dto';
 import { ReplaceProductDto } from './dto/replace-product.dto';
@@ -12,8 +12,12 @@ export class ProductsController {
   async findAll(
     @Query('page', new ParseIntPipe({ optional: true })) page?: number,
     @Query('limit', new ParseIntPipe({ optional: true })) limit?: number,
+    @Query('categoryId', new ParseIntPipe({ optional: true })) categoryId?: number,
+    @Query('minPrice', new ParseFloatPipe({ optional: true })) minPrice?: number,
+    @Query('maxPrice', new ParseFloatPipe({ optional: true })) maxPrice?: number,
+    @Query('search') search?: string,
   ) {
-    return this.productsService.findAll(page, limit);
+    return this.productsService.findAll(page, limit, categoryId, minPrice, maxPrice, search);
   }
 
   @Get(':id')
