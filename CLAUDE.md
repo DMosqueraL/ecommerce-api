@@ -59,7 +59,24 @@ npx prisma migrate dev --name <migration_name>   # Create and apply a migration
 npx prisma migrate deploy                         # Apply pending migrations (prod)
 npx prisma studio                                 # Open visual DB browser
 npx prisma generate                               # Regenerate client after schema change
+npx prisma db seed                                # Run the seed script
 ```
+
+### Seeding
+
+The seed script lives at `prisma/seed.ts` and is configured in `prisma.config.ts` (Prisma 7 reads seed config from there, not `package.json`):
+
+```typescript
+// prisma.config.ts
+migrations: {
+  path: "prisma/migrations",
+  seed: "tsx prisma/seed.ts",   // tsx handles Prisma 7 ESM imports correctly
+},
+```
+
+`ts-node` does not work for seeds in this project — the generated client uses `.js` ESM imports that `ts-node` (CommonJS mode) cannot resolve. Use `tsx` instead.
+
+The seed populates 5 categories (Electrónica, Ropa, Hogar, Deportes, Ferretería) with 5 products each (25 total), priced in COP. It calls `deleteMany` on both tables before inserting so it is safe to run multiple times.
 
 ### Schema models
 
@@ -101,6 +118,48 @@ Data is persisted in PostgreSQL via Prisma. `ProductsService` uses `PrismaServic
 `findAll` and `findOne` include `{ category: true }` — every response contains the full category object nested inside the product.
 
 `create`, `replace`, and `patch` validate that `categoryId` exists before writing to the DB. If the category is not found, a `NotFoundException` is thrown (`"Categoría con id ${id} no encontrada"`). In `patch`, the validation is skipped when `categoryId` is not present in the body.
+
+### Pagination
+
+`GET /products` supports optional `page` and `limit` query params (defaults: `page=1`, `limit=10`).
+
+`findAll` runs `findMany` and `count` in parallel with `Promise.all` and returns:
+
+```json
+{ "data": [...], "total": 25, "page": 1, "limit": 10, "totalPages": 3 }
+```
+
+`count` receives the same `where` object as `findMany` so totals always reflect the active filters.
+
+### Filters
+
+`GET /products` also supports these optional query params:
+
+| Param | Type | Description |
+|-------|------|-------------|
+| `categoryId` | integer | Filter by category |
+| `minPrice` | float | Minimum price (inclusive) |
+| `maxPrice` | float | Maximum price (inclusive) |
+| `search` | string | Substring match on `name` or `description` (case-insensitive) |
+
+The `where` object is built dynamically — only params that are present in the request are included. Pattern:
+
+```typescript
+const where = {
+  ...(categoryId !== undefined && { categoryId }),
+  ...(minPrice !== undefined || maxPrice !== undefined
+    ? { price: { ...(minPrice !== undefined && { gte: minPrice }), ...(maxPrice !== undefined && { lte: maxPrice }) } }
+    : {}),
+  ...(search !== undefined && {
+    OR: [
+      { name: { contains: search, mode: 'insensitive' as const } },
+      { description: { contains: search, mode: 'insensitive' as const } },
+    ],
+  }),
+};
+```
+
+In the controller, `categoryId` uses `ParseIntPipe({ optional: true })` and `minPrice`/`maxPrice` use `ParseFloatPipe({ optional: true })`; `search` is a plain `@Query('search')` string.
 
 ## Categories module
 

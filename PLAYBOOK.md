@@ -593,6 +593,214 @@ Es el indicador de línea del panel de respuesta vacío. Es comportamiento corre
 
 ---
 
+## Seeding con Prisma 7
+
+### Por qué tsx y no ts-node
+
+Prisma 7 genera el cliente en `generated/prisma/` con archivos `.ts` que usan imports `.js` (convención ESM de TypeScript). `ts-node` en modo CommonJS no resuelve esos imports y falla con `Cannot find module './internal/class.js'`. `tsx` maneja ambos formatos sin configuración adicional.
+
+### Configurar el seed
+
+El comando va en `prisma.config.ts` (Prisma 7 ignora `package.json` para esto):
+
+```typescript
+migrations: {
+  path: "prisma/migrations",
+  seed: "tsx prisma/seed.ts",
+},
+```
+
+### Estructura del seed
+
+```typescript
+import 'dotenv/config';
+import { PrismaClient } from '../generated/prisma/client';
+import { PrismaPg } from '@prisma/adapter-pg';
+
+const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL });
+const prisma = new PrismaClient({ adapter });
+
+async function main() {
+  // Limpiar antes de insertar (idempotente)
+  await prisma.product.deleteMany();
+  await prisma.category.deleteMany();
+
+  await prisma.category.create({
+    data: {
+      name: 'Electrónica',
+      products: { create: [/* array de productos */] },
+    },
+  });
+}
+
+main()
+  .catch((e) => { console.error(e); process.exit(1); })
+  .finally(() => prisma.$disconnect());
+```
+
+### Correr el seed
+
+```bash
+npx prisma db seed
+```
+
+### ⚠️ Gotchas
+| # | Gotcha |
+|---|--------|
+| 1 | `ts-node` falla con Prisma 7 — usar `tsx` |
+| 2 | El seed va en `prisma.config.ts → migrations.seed`, no en `package.json` |
+| 3 | `PrismaClient` requiere el adapter igual que en `PrismaService` |
+| 4 | El import es desde `'../generated/prisma/client'` (con `/client` al final) |
+| 5 | Llamar `deleteMany` en orden hijo → padre para respetar las FK |
+
+### Prompt reutilizable
+
+```
+Crea un seed en prisma/seed.ts que pueble la DB con datos de prueba:
+- [lista de entidades y datos]
+Usa tsx (no ts-node). Configura el comando en prisma.config.ts → migrations.seed.
+El seed debe ser idempotente: borrar todo antes de insertar.
+```
+
+---
+
+## Paginación con skip/take
+
+### Concepto
+
+`skip` descarta los primeros N registros; `take` limita cuántos se devuelven.
+Juntos implementan paginación offset estándar: `skip = (page - 1) * limit`.
+
+### Patrón en el servicio
+
+```typescript
+async findAll(page: number = 1, limit: number = 10) {
+  const skip = (page - 1) * limit;
+  const [data, total] = await Promise.all([
+    this.prisma.product.findMany({ where, skip, take: limit, include: { category: true } }),
+    this.prisma.product.count({ where }),   // mismo where para totales correctos
+  ]);
+  return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
+}
+```
+
+`Promise.all` ejecuta ambas queries en paralelo — más eficiente que secuencial.
+El `count` recibe el mismo `where` que `findMany` para que `total` y `totalPages`
+reflejen los resultados filtrados, no el total de la tabla.
+
+### Patrón en el controller
+
+```typescript
+@Get()
+async findAll(
+  @Query('page', new ParseIntPipe({ optional: true })) page?: number,
+  @Query('limit', new ParseIntPipe({ optional: true })) limit?: number,
+) {
+  return this.productsService.findAll(page, limit);
+}
+```
+
+`ParseIntPipe({ optional: true })` convierte el string del query param a número
+y no lanza error si el param no viene — el default lo maneja el servicio.
+
+### Respuesta
+
+```json
+{ "data": [...], "total": 25, "page": 2, "limit": 10, "totalPages": 3 }
+```
+
+### ⚠️ Gotchas
+| # | Gotcha |
+|---|--------|
+| 1 | `count` debe recibir el mismo `where` que `findMany` — sin esto `totalPages` es incorrecto cuando hay filtros activos |
+| 2 | Los defaults (`page=1`, `limit=10`) van en el servicio, no en el controller |
+| 3 | `ParseIntPipe` sin `optional: true` lanza 400 si el param no viene |
+
+### Prompt reutilizable
+
+```
+En src/[entidad]/[entidad].service.ts modifica findAll para aceptar page y limit
+como parámetros opcionales (default: page=1, limit=10). Usar skip: (page-1)*limit
+y take: limit en findMany. Ejecutar findMany y count en paralelo con Promise.all.
+Retornar { data, total, page, limit, totalPages }.
+
+En el controller agrega @Query('page') y @Query('limit') con ParseIntPipe({ optional: true }).
+```
+
+---
+
+## Filtros dinámicos con where object
+
+### Concepto
+
+Construir el objeto `where` de Prisma condicionalmente con spread — solo se incluyen
+las propiedades cuyos valores están definidos. Así una query sin filtros devuelve
+todo, y cada filtro que llega se aplica de forma aditiva (AND implícito de Prisma).
+
+### Patrón
+
+```typescript
+const where = {
+  // Filtro exacto por FK
+  ...(categoryId !== undefined && { categoryId }),
+
+  // Filtro de rango — solo incluir si al menos uno de los dos viene
+  ...(minPrice !== undefined || maxPrice !== undefined
+    ? {
+        price: {
+          ...(minPrice !== undefined && { gte: minPrice }),
+          ...(maxPrice !== undefined && { lte: maxPrice }),
+        },
+      }
+    : {}),
+
+  // Búsqueda de texto — OR entre campos, insensible a mayúsculas
+  ...(search !== undefined && {
+    OR: [
+      { name: { contains: search, mode: 'insensitive' as const } },
+      { description: { contains: search, mode: 'insensitive' as const } },
+    ],
+  }),
+};
+```
+
+### Query params en el controller
+
+```typescript
+@Query('categoryId', new ParseIntPipe({ optional: true })) categoryId?: number,
+@Query('minPrice',   new ParseFloatPipe({ optional: true })) minPrice?: number,
+@Query('maxPrice',   new ParseFloatPipe({ optional: true })) maxPrice?: number,
+@Query('search') search?: string,
+```
+
+- Enteros → `ParseIntPipe({ optional: true })`
+- Decimales → `ParseFloatPipe({ optional: true })`
+- Strings → `@Query('param')` directo, sin pipe
+
+### ⚠️ Gotchas
+| # | Gotcha |
+|---|--------|
+| 1 | `mode: 'insensitive' as const` es necesario — sin el cast TypeScript no acepta el literal |
+| 2 | `price: { gte, lte }` solo se agrega si viene al menos uno de los dos; sin esta guarda, se agrega `price: {}` que Prisma ignora pero es ruido |
+| 3 | Todos los filtros son AND implícito — Prisma los combina solo |
+| 4 | El mismo `where` debe pasarse tanto a `findMany` como a `count` |
+
+### Prompt reutilizable
+
+```
+En src/[entidad]/[entidad].service.ts modifica findAll para aceptar estos filtros opcionales:
+- [campo FK]?: number → filtrar por FK exacta
+- minPrice?: number / maxPrice?: number → rango de precio con gte/lte
+- search?: string → contains insensitive en [campo1] y [campo2]
+
+Construir el objeto where dinámicamente: solo incluir la propiedad si el valor no es undefined.
+Pasar el mismo where a findMany y a count.
+
+En el controller agregar los @Query params con ParseIntPipe/ParseFloatPipe donde corresponda.
+```
+
+---
+
 ## Extras
 
 ```
