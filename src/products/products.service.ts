@@ -8,8 +8,13 @@ import { UpdateProductDto } from './dto/update-product.dto';
 export class ProductsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async findAll() {
-    return this.prisma.product.findMany({ include: { category: true } });
+  async findAll(page: number = 1, limit: number = 10) {
+    const skip = (page - 1) * limit;
+    const [data, total] = await Promise.all([
+      this.prisma.product.findMany({ skip, take: limit, include: { category: true } }),
+      this.prisma.product.count(),
+    ]);
+    return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
   }
 
   async findOne(id: number) {
