@@ -1276,6 +1276,121 @@ el seed sea idempotente. Usar [campo único] como clave en where.
 
 ---
 
+## Módulo de Órdenes
+
+```
+Implementa el módulo de órdenes completo en src/orders/.
+
+Endpoints:
+- POST /orders → crear pedido (USER y ADMIN)
+- GET /orders → listar todos (solo ADMIN) con paginación
+- GET /orders/me → mis pedidos (USER y ADMIN) con paginación
+- GET /orders/:id → ver detalle; ADMIN ve cualquiera, USER solo los suyos → 403 si no es suyo
+- PATCH /orders/:id/status → actualizar estado (solo ADMIN)
+
+Lógica de precios por item:
+- price = precio del producto en DB (congelado)
+- discountAmount = price * discountPercent / 100
+- finalPrice = price - discountAmount
+- subtotal = finalPrice * quantity
+
+Totales de la orden:
+- totalAmount = suma de subtotales
+- taxAmount = totalAmount * 0.19
+- shippingCost = CONTRA_ENTREGA → 20000, otros → 15000
+- grandTotal = totalAmount + taxAmount + shippingCost
+
+Validaciones: productId existe, stock suficiente.
+Usar prisma.$transaction para crear Order + OrderItems atómicamente.
+```
+
+### Migración con datos existentes
+
+Cuando una columna nueva es `NOT NULL` sin default y ya hay filas en la tabla,
+`prisma migrate dev` falla. Flujo correcto:
+
+```bash
+# 1. Crear el archivo SQL manualmente en prisma/migrations/<timestamp>_<name>/migration.sql
+#    Añadir las columnas con DEFAULT temporales para las filas existentes,
+#    luego actualizar los datos y eliminar los defaults.
+
+# 2. Aplicar el SQL directamente a la DB
+npx prisma db execute --file prisma/migrations/<timestamp>_<name>/migration.sql
+
+# 3. Registrar la migración como aplicada en la tabla _prisma_migrations
+npx prisma migrate resolve --applied <timestamp>_<name>
+
+# 4. Regenerar el cliente
+npx prisma generate
+```
+
+Ejemplo de SQL seguro para columna required con datos existentes:
+```sql
+-- Agregar con DEFAULT temporal
+ALTER TABLE "OrderItem" ADD COLUMN "price" DOUBLE PRECISION NOT NULL DEFAULT 0;
+-- Migrar datos de columna anterior
+UPDATE "OrderItem" SET "price" = "unitPrice";
+-- Eliminar la columna vieja
+ALTER TABLE "OrderItem" DROP COLUMN "unitPrice";
+-- Quitar el default (Prisma lo maneja como required sin default)
+ALTER TABLE "OrderItem" ALTER COLUMN "price" DROP DEFAULT;
+```
+
+---
+
+## Filtros dinámicos con where
+
+Patrón reutilizable para construir filtros opcionales en cualquier servicio:
+
+```typescript
+private buildWhere(filters: { status?; paymentMethod?; startDate?; endDate?; userId? }) {
+  const { status, paymentMethod, startDate, endDate, userId } = filters;
+  return {
+    ...(userId !== undefined && { userId }),
+    ...(status !== undefined && { status }),
+    ...(paymentMethod !== undefined && { paymentMethod }),
+    ...(startDate !== undefined || endDate !== undefined
+      ? {
+          createdAt: {
+            ...(startDate !== undefined && { gte: new Date(startDate) }),
+            ...(endDate !== undefined && { lte: new Date(endDate) }),
+          },
+        }
+      : {}),
+  };
+}
+```
+
+En el controlador, los parámetros de query llegan como `string` para enums y fechas —
+Prisma acepta el string directamente para enums; para fechas, `new Date(string)` hace la conversión.
+
+---
+
+## Módulo de Perfil (One-to-One)
+
+```
+Crea el módulo de perfil en src/profile/.
+
+Endpoints (todos requieren token, cualquier rol):
+- GET /profile/me → ver mi perfil
+- POST /profile/me → crear mi perfil (409 si ya existe)
+- PATCH /profile/me → actualizar mi perfil (404 si no existe)
+
+userId siempre viene de req.user.id — nunca del body.
+Todos los campos opcionales: phone, address, docType, docNumber.
+```
+
+### Puntos clave de la relación One-to-One
+
+| Aspecto | Detalle |
+|---|---|
+| Schema | `userId Int @unique` en Profile hace la relación 1:1 |
+| Guard | Sin `@Roles` → cualquier JWT válido pasa (JwtAuthGuard global lo exige) |
+| Conflict | `findUnique` antes de `create`; si existe → `ConflictException` 409 |
+| Not Found | `findUnique` antes de `update`; si no existe → `NotFoundException` 404 |
+
+---
+
 ## Tarjetas de estudio
 
 ### Tarjeta 1 — Prisma 7: Los 3 gotchas que debes saber de memoria

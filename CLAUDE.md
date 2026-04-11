@@ -101,17 +101,28 @@ The seed populates 5 categories (Electrónica, Ropa, Hogar, Deportes, Ferreterí
 ### Schema models
 
 ```
-Category  id (PK), name (unique)
-Product   id (PK), name, description, stock, price, categoryId (FK → Category)
-User      id (PK), email (unique), password, role (Role enum), isActive, createdAt, updatedAt
-Profile   id (PK), phone?, address?, docType?, docNumber?, userId (FK → User, unique)
+Category   id (PK), name (unique)
+Product    id (PK), name, description, stock, price, categoryId (FK → Category)
+User       id (PK), email (unique), password, role (Role enum), isActive, createdAt, updatedAt
+Profile    id (PK), phone?, address?, docType?, docNumber?, userId (FK → User, unique)
+Order      id (PK), userId (FK → User), status (OrderStatus), totalAmount, shippingCost,
+           taxAmount, grandTotal, shippingAddress, billingAddress, paymentMethod (PaymentMethod),
+           shippingCompany, trackingNumber, carrierPhone, createdAt, updatedAt
+OrderItem  id (PK), orderId (FK → Order), productId (FK → Product), quantity,
+           price, discountPercent, discountAmount, finalPrice, subtotal
 ```
 
 Category → Product is a **One-to-Many** relationship (`categoryId` is required on every product).
 
 User → Profile is a **One-to-One** relationship (`userId` is unique on Profile). Profile is optional — a User can exist without a Profile.
 
+User → Order is a **One-to-Many** relationship. Order → OrderItem is a **One-to-Many** relationship.
+
 The `Role` enum has three values: `ADMIN`, `USER`, `GUEST`. Default is `USER`.
+
+The `OrderStatus` enum: `PENDING`, `CONFIRMED`, `SHIPPED`, `DELIVERED`, `CANCELLED`. Default is `PENDING`.
+
+The `PaymentMethod` enum: `TARJETA`, `TRANSFERENCIA`, `CONTRA_ENTREGA`.
 
 The `isActive` field (`Boolean`, default `true`) controls whether a user can log in. If `false`, login is rejected with `401 "Tu cuenta está bloqueada. Contacta al administrador."`
 
@@ -138,15 +149,30 @@ NestJS uses decorator-based dependency injection. Controllers handle HTTP routin
 
 ## Users module
 
-`src/users/` — no controller (internal module only).
+`src/users/` — controller + service. All endpoints require `@Roles('ADMIN')`.
+
+Endpoints (`/users`):
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/users` | List all users (paginated, no passwords) |
+| GET | `/users/:id` | Get one user (no password); 404 if not found |
+| PATCH | `/users/:id/role` | Change role; body `{ role: 'ADMIN' \| 'USER' \| 'GUEST' }` |
+| PATCH | `/users/:id/block` | Block/unblock; body `{ isActive: boolean }` |
+| DELETE | `/users/:id` | Delete user (204); 404 if not found |
 
 `UsersService` methods:
 
 | Method | Description |
 |--------|-------------|
-| `findByEmail(email)` | Look up a user by email; returns `null` if not found |
-| `findById(id)` | Look up a user by PK |
+| `findByEmail(email)` | Look up by email; returns `null` if not found (used by AuthService) |
+| `findById(id)` | Look up by PK |
 | `create(data)` | Create a new user record |
+| `findAll(page, limit)` | Paginated list; `password` excluded via `select` |
+| `findOneOrFail(id)` | Find by PK; throws `404` if not found; `password` excluded |
+| `updateRole(id, role)` | Update role field; throws `404` if not found |
+| `updateBlock(id, isActive)` | Update `isActive` field; throws `404` if not found |
+| `remove(id)` | Delete user; throws `404` if not found |
 
 `UsersModule` exports `UsersService` so `AuthModule` can inject it.
 
@@ -196,6 +222,87 @@ Both guards are registered globally in `AppModule` as `APP_GUARD`. Order matters
 | `DELETE /categories/:id` | ❌ 401 | ❌ 403 | ✅ |
 | `POST /auth/register` | ✅ | ✅ | ✅ |
 | `POST /auth/login` | ✅ | ✅ | ✅ |
+| `GET /users` | ❌ 401 | ❌ 403 | ✅ |
+| `GET /users/:id` | ❌ 401 | ❌ 403 | ✅ |
+| `PATCH /users/:id/role` | ❌ 401 | ❌ 403 | ✅ |
+| `PATCH /users/:id/block` | ❌ 401 | ❌ 403 | ✅ |
+| `DELETE /users/:id` | ❌ 401 | ❌ 403 | ✅ |
+| `GET /profile/me` | ❌ 401 | ✅ | ✅ |
+| `POST /profile/me` | ❌ 401 | ✅ | ✅ |
+| `PATCH /profile/me` | ❌ 401 | ✅ | ✅ |
+| `POST /orders` | ❌ 401 | ✅ | ✅ |
+| `GET /orders` | ❌ 401 | ❌ 403 | ✅ |
+| `GET /orders/me` | ❌ 401 | ✅ | ✅ |
+| `GET /orders/:id` | ❌ 401 | ✅ (own only) | ✅ |
+| `PATCH /orders/:id/status` | ❌ 401 | ❌ 403 | ✅ |
+
+## Profile module
+
+`src/profile/` — endpoints for the authenticated user to manage their own profile. No `@Roles` needed — any valid JWT passes.
+
+Endpoints (`/profile`):
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/profile/me` | View my profile (returns `null` if none exists) |
+| POST | `/profile/me` | Create my profile; 409 if already exists |
+| PATCH | `/profile/me` | Partial update; 404 if profile does not exist |
+
+`userId` is always taken from `req.user.id` — users can only access their own profile.
+
+`ProfileService` methods:
+
+| Method | Description |
+|--------|-------------|
+| `findByUserId(userId)` | Returns profile or `null` |
+| `create(userId, data)` | Creates profile; throws `409 ConflictException` if one already exists |
+| `update(userId, data)` | Partial update; throws `404 NotFoundException` if none exists |
+
+All four fields (`phone`, `address`, `docType`, `docNumber`) are optional in both `CreateProfileDto` and `UpdateProfileDto`.
+
+## Orders module
+
+`src/orders/` — order creation and management.
+
+Endpoints (`/orders`):
+
+| Method | Path | Roles | Description |
+|--------|------|-------|-------------|
+| POST | `/orders` | USER, ADMIN | Create order |
+| GET | `/orders` | ADMIN | List all orders (paginated + filtered) |
+| GET | `/orders/me` | USER, ADMIN | My orders (paginated + filtered) |
+| GET | `/orders/:id` | USER, ADMIN | Detail; USER can only view own orders (403 otherwise) |
+| PATCH | `/orders/:id/status` | ADMIN | Update order status |
+
+### Order creation logic (`OrdersService.create`)
+
+1. Validates each `productId` exists — throws `404` if not found.
+2. Validates stock is sufficient — throws `400` if not.
+3. Per-item price calculation:
+   - `price` = product price at time of purchase (frozen)
+   - `discountAmount` = `price * discountPercent / 100` (default `discountPercent = 0`)
+   - `finalPrice` = `price - discountAmount`
+   - `subtotal` = `finalPrice * quantity`
+4. Order totals:
+   - `totalAmount` = sum of subtotals
+   - `taxAmount` = `totalAmount * 0.19` (19% IVA)
+   - `shippingCost` = `20000` if `CONTRA_ENTREGA`, else `15000`
+   - `grandTotal` = `totalAmount + taxAmount + shippingCost`
+5. Wrapped in `prisma.$transaction` — Order + all OrderItems created atomically.
+
+### Filters
+
+`GET /orders` and `GET /orders/me` support these optional query params:
+
+| Param | Type | Available on |
+|-------|------|-------------|
+| `status` | `OrderStatus` enum | both |
+| `paymentMethod` | `PaymentMethod` enum | both |
+| `startDate` | ISO date string | both |
+| `endDate` | ISO date string | both |
+| `userId` | integer | ADMIN only (`GET /orders`) |
+
+The `where` object is built dynamically via `buildWhere()` — same spread-conditional pattern as products. `startDate`/`endDate` map to `createdAt: { gte, lte }`.
 
 ## Products module
 
