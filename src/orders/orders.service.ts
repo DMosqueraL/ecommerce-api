@@ -2,9 +2,16 @@ import { Injectable, NotFoundException, BadRequestException, ForbiddenException 
 import { PrismaService } from '../prisma/prisma.service';
 import type { CreateOrderDto } from './dto/create-order.dto';
 import type { UpdateStatusDto } from './dto/update-status.dto';
-import { PaymentMethod } from '../../generated/prisma/enums';
+import { PaymentMethod, OrderStatus } from '../../generated/prisma/enums';
 
 const ITEMS_INCLUDE = { items: { include: { product: true } } };
+
+export interface OrderFilters {
+  status?: OrderStatus;
+  paymentMethod?: PaymentMethod;
+  startDate?: string;
+  endDate?: string;
+}
 
 @Injectable()
 export class OrdersService {
@@ -24,11 +31,14 @@ export class OrdersService {
       }),
     );
 
-    // Calculate amounts
+    // Calculate amounts with optional discount
     const itemsData = dto.items.map((item, i) => {
-      const unitPrice = products[i].price;
-      const subtotal = unitPrice * item.quantity;
-      return { productId: item.productId, quantity: item.quantity, unitPrice, subtotal };
+      const price = products[i].price;
+      const discountPercent = item.discountPercent ?? 0;
+      const discountAmount = price * discountPercent / 100;
+      const finalPrice = price - discountAmount;
+      const subtotal = finalPrice * item.quantity;
+      return { productId: item.productId, quantity: item.quantity, price, discountPercent, discountAmount, finalPrice, subtotal };
     });
 
     const totalAmount = itemsData.reduce((sum, i) => sum + i.subtotal, 0);
@@ -37,7 +47,7 @@ export class OrdersService {
     const grandTotal = totalAmount + taxAmount + shippingCost;
 
     return this.prisma.$transaction(async (tx) => {
-      const order = await tx.order.create({
+      return tx.order.create({
         data: {
           userId,
           totalAmount,
@@ -54,22 +64,39 @@ export class OrdersService {
         },
         include: ITEMS_INCLUDE,
       });
-      return order;
     });
   }
 
-  async findAll(page: number = 1, limit: number = 10) {
+  private buildWhere(filters: OrderFilters & { userId?: number }) {
+    const { status, paymentMethod, startDate, endDate, userId } = filters;
+    return {
+      ...(userId !== undefined && { userId }),
+      ...(status !== undefined && { status }),
+      ...(paymentMethod !== undefined && { paymentMethod }),
+      ...(startDate !== undefined || endDate !== undefined
+        ? {
+            createdAt: {
+              ...(startDate !== undefined && { gte: new Date(startDate) }),
+              ...(endDate !== undefined && { lte: new Date(endDate) }),
+            },
+          }
+        : {}),
+    };
+  }
+
+  async findAll(page: number = 1, limit: number = 10, filters: OrderFilters & { userId?: number } = {}) {
     const skip = (page - 1) * limit;
+    const where = this.buildWhere(filters);
     const [data, total] = await Promise.all([
-      this.prisma.order.findMany({ skip, take: limit, include: ITEMS_INCLUDE }),
-      this.prisma.order.count(),
+      this.prisma.order.findMany({ where, skip, take: limit, include: ITEMS_INCLUDE }),
+      this.prisma.order.count({ where }),
     ]);
     return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
   }
 
-  async findMine(userId: number, page: number = 1, limit: number = 10) {
+  async findMine(userId: number, page: number = 1, limit: number = 10, filters: OrderFilters = {}) {
     const skip = (page - 1) * limit;
-    const where = { userId };
+    const where = this.buildWhere({ ...filters, userId });
     const [data, total] = await Promise.all([
       this.prisma.order.findMany({ where, skip, take: limit, include: ITEMS_INCLUDE }),
       this.prisma.order.count({ where }),

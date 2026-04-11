@@ -1,4 +1,4 @@
-import { IsString, IsNotEmpty, IsEnum, IsArray, ValidateNested, IsInt, IsPositive } from 'class-validator';
+import { IsString, IsNotEmpty, IsEnum, IsArray, ValidateNested, IsInt, IsPositive, IsOptional, IsNumber, Min, Max } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiProperty } from '@nestjs/swagger';
 import { PaymentMethod } from '../../../generated/prisma/enums';
@@ -13,6 +13,13 @@ export class OrderItemDto {
   @IsInt({ message: 'La cantidad debe ser un número entero' })
   @IsPositive({ message: 'La cantidad debe ser mayor a 0' })
   quantity: number;
+
+  @ApiProperty({ description: 'Porcentaje de descuento (0-100)', example: 10, required: false })
+  @IsOptional()
+  @IsNumber({}, { message: 'El descuento debe ser un número' })
+  @Min(0, { message: 'El descuento no puede ser negativo' })
+  @Max(100, { message: 'El descuento no puede superar el 100%' })
+  discountPercent?: number;
 }
 
 export class CreateOrderDto {

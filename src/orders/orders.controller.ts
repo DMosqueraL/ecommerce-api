@@ -1,9 +1,10 @@
-import { Controller, Get, Post, Patch, Param, Body, Req, ParseIntPipe, HttpCode, Query } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Param, Body, Req, ParseIntPipe, Query } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { OrdersService } from './orders.service';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateStatusDto } from './dto/update-status.dto';
 import { Roles } from '../common/decorators/roles.decorator';
+import { OrderStatus, PaymentMethod } from '../../generated/prisma/enums';
 
 @ApiTags('orders')
 @Controller('orders')
@@ -21,8 +22,13 @@ export class OrdersController {
   findAll(
     @Query('page', new ParseIntPipe({ optional: true })) page?: number,
     @Query('limit', new ParseIntPipe({ optional: true })) limit?: number,
+    @Query('userId', new ParseIntPipe({ optional: true })) userId?: number,
+    @Query('status') status?: OrderStatus,
+    @Query('paymentMethod') paymentMethod?: PaymentMethod,
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
   ) {
-    return this.ordersService.findAll(page, limit);
+    return this.ordersService.findAll(page, limit, { status, paymentMethod, startDate, endDate, userId });
   }
 
   @Roles('ADMIN', 'USER')
@@ -31,8 +37,12 @@ export class OrdersController {
     @Req() req,
     @Query('page', new ParseIntPipe({ optional: true })) page?: number,
     @Query('limit', new ParseIntPipe({ optional: true })) limit?: number,
+    @Query('status') status?: OrderStatus,
+    @Query('paymentMethod') paymentMethod?: PaymentMethod,
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
   ) {
-    return this.ordersService.findMine(req.user.id, page, limit);
+    return this.ordersService.findMine(req.user.id, page, limit, { status, paymentMethod, startDate, endDate });
   }
 
   @Roles('ADMIN', 'USER')
