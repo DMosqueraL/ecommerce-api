@@ -30,6 +30,8 @@ export class AuthService {
     const valid = await bcrypt.compare(dto.password, user.password);
     if (!valid) throw new UnauthorizedException('Credenciales inválidas');
 
+    if (!user.isActive) throw new UnauthorizedException('Tu cuenta está bloqueada. Contacta al administrador.');
+
     const payload = { sub: user.id, email: user.email, role: user.role };
     return { access_token: this.jwtService.sign(payload) };
   }
