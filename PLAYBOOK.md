@@ -1276,6 +1276,36 @@ el seed sea idempotente. Usar [campo único] como clave en where.
 
 ---
 
+## Tarjetas de estudio
+
+### Tarjeta 1 — Prisma 7: Los 3 gotchas que debes saber de memoria
+
+**1. moduleFormat = "commonjs"**
+NestJS usa CommonJS. Sin esto, Prisma genera el cliente en ESM y NestJS 
+no puede importarlo. La app compila pero falla en runtime.
+
+**2. url va en prisma.config.ts, no en schema.prisma**
+Prisma 7 separó la URL de conexión del schema. En schema.prisma solo va 
+el provider. La URL va en prisma.config.ts → datasource.url.
+
+**3. Import desde generated/prisma/client**
+Prisma 7 genera su propio cliente local. Nunca importes desde @prisma/client 
+— ese paquete no tiene los tipos de tus modelos.
+
+---
+
+### Tarjeta 2 — JWT: Las piezas del flujo de autenticación
+
+| Pieza | Qué hace |
+|---|---|
+| AuthService.login | Valida email, compara password con bcrypt, verifica isActive, genera JWT firmado con { sub, email, role } |
+| Header | El campo se llama Authorization. El valor es Bearer <token>. No es solo "token" |
+| JwtStrategy | Verifica el token con JWT_SECRET. Extrae el payload e inyecta { id, email, role } en req.user |
+| JwtAuthGuard | Autenticación — "¿quién eres?". Sin token o token inválido → 401. Si la ruta tiene @Public() lo deja pasar sin validar |
+| RolesGuard | Autorización — "¿tienes permiso?". Token válido pero rol insuficiente → 403. Se ejecuta DESPUÉS de JwtAuthGuard |
+
+---
+
 ## Extras
 
 ```
