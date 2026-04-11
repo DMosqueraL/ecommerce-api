@@ -41,6 +41,7 @@ Configuration is managed with `@nestjs/config`. Copy `.env.example` to `.env` an
 |----------|-------------|---------|
 | `PORT` | HTTP port | `3000` |
 | `DATABASE_URL` | PostgreSQL connection string | — |
+| `JWT_SECRET` | Secret key used to sign and verify JWT tokens | — |
 
 `.env` is git-ignored. `.env.example` (with placeholder values) is committed as reference. `ConfigModule.forRoot({ isGlobal: true, validationSchema: envValidationSchema })` is registered in `AppModule`, so `ConfigService` is injectable anywhere without reimporting. `main.ts` reads `PORT` via `configService.get<number>('PORT', 3000)`.
 
@@ -54,10 +55,11 @@ import * as Joi from 'joi';
 export const envValidationSchema = Joi.object({
   PORT: Joi.number().default(3000),
   DATABASE_URL: Joi.string().required(),
+  JWT_SECRET: Joi.string().required(),
 });
 ```
 
-If `DATABASE_URL` is missing the app refuses to start with:
+If `DATABASE_URL` or `JWT_SECRET` is missing the app refuses to start with:
 ```
 Error: Config validation error: "DATABASE_URL" is required
 ```
@@ -101,21 +103,99 @@ The seed populates 5 categories (Electrónica, Ropa, Hogar, Deportes, Ferreterí
 ```
 Category  id (PK), name (unique)
 Product   id (PK), name, description, stock, price, categoryId (FK → Category)
+User      id (PK), email (unique), password, role (Role enum), isActive, createdAt, updatedAt
+Profile   id (PK), phone?, address?, docType?, docNumber?, userId (FK → User, unique)
 ```
 
 Category → Product is a **One-to-Many** relationship (`categoryId` is required on every product).
+
+User → Profile is a **One-to-One** relationship (`userId` is unique on Profile). Profile is optional — a User can exist without a Profile.
+
+The `Role` enum has three values: `ADMIN`, `USER`, `GUEST`. Default is `USER`.
+
+The `isActive` field (`Boolean`, default `true`) controls whether a user can log in. If `false`, login is rejected with `401 "Tu cuenta está bloqueada. Contacta al administrador."`
+
+The seed (`npx prisma db seed`) creates two users with hashed passwords:
+
+| Email | Password | Role |
+|-------|----------|------|
+| `admin@ecommerce.com` | `Admin123!` | ADMIN |
+| `user@ecommerce.com` | `User123!` | USER |
 
 ## Architecture
 
 Standard NestJS module architecture:
 
 - **`src/main.ts`** — Bootstrap; registers global `HttpExceptionFilter` and `ValidationPipe`; configures SwaggerModule at `/api`; reads `PORT` from `ConfigService`.
-- **`src/app.module.ts`** — Root module; imports `ConfigModule` (global, with Joi validation) and feature modules.
+- **`src/app.module.ts`** — Root module; imports `ConfigModule` (global, with Joi validation) and feature modules. Registers `JwtAuthGuard` and `RolesGuard` as global `APP_GUARD` providers (in that order).
 - **`src/config/env.validation.ts`** — Joi schema for startup env var validation.
 - **`src/common/filters/`** — Global filters shared across the whole app.
+- **`src/common/guards/`** — Global guards: `RolesGuard` reads the `@Roles()` metadata and throws `403` if the user's role is not in the allowed list.
+- **`src/common/decorators/`** — Shared decorators: `@Public()` marks a route as unauthenticated; `@Roles(...roles)` restricts a route to specific roles.
 - Feature modules go under `src/<feature>/` following the pattern: `<feature>.module.ts`, `<feature>.controller.ts`, `<feature>.service.ts`, and a `dto/` subfolder.
 
 NestJS uses decorator-based dependency injection. Controllers handle HTTP routing (`@Controller`, `@Get`, etc.), services contain business logic (`@Injectable`), and modules wire them together (`@Module`).
+
+## Users module
+
+`src/users/` — no controller (internal module only).
+
+`UsersService` methods:
+
+| Method | Description |
+|--------|-------------|
+| `findByEmail(email)` | Look up a user by email; returns `null` if not found |
+| `findById(id)` | Look up a user by PK |
+| `create(data)` | Create a new user record |
+
+`UsersModule` exports `UsersService` so `AuthModule` can inject it.
+
+## Auth module
+
+`src/auth/` — handles registration, login, and JWT validation.
+
+Endpoints (`/auth`):
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| POST | `/auth/register` | Public | Create account; returns user without password |
+| POST | `/auth/login` | Public | Validate credentials; returns `{ access_token }` |
+
+**`AuthService.register`** — checks email uniqueness, hashes password with `bcrypt` (salt 10), persists via `UsersService.create`. Returns user object with `password` field stripped.
+
+**`AuthService.login`** — finds user by email, compares password with `bcrypt.compare`, checks `isActive === true`, then signs a JWT with payload `{ sub, email, role }` and 7-day expiry.
+
+**`JwtStrategy`** (`src/auth/jwt.strategy.ts`) — `PassportStrategy(Strategy)` that extracts the Bearer token, verifies it with `JWT_SECRET`, and returns `{ id, email, role }` into `req.user`.
+
+**`JwtAuthGuard`** (`src/auth/jwt-auth.guard.ts`) — extends `AuthGuard('jwt')`. Before delegating to Passport, checks the `isPublic` metadata: if the route is decorated with `@Public()`, it returns `true` immediately without validating any token. Registered globally via `APP_GUARD`.
+
+## Guards and decorators
+
+| File | What it does |
+|------|-------------|
+| `src/common/decorators/public.decorator.ts` | `@Public()` — sets `isPublic: true` metadata; skips JWT validation |
+| `src/common/decorators/roles.decorator.ts` | `@Roles('ADMIN')` — sets `roles` metadata; checked by `RolesGuard` |
+| `src/common/guards/roles.guard.ts` | Reads `roles` metadata; throws `403 ForbiddenException` if `req.user.role` is not in the list |
+
+Both guards are registered globally in `AppModule` as `APP_GUARD`. Order matters: `JwtAuthGuard` runs first (authentication), then `RolesGuard` (authorization).
+
+### Endpoint access matrix
+
+| Endpoint | No token | USER token | ADMIN token |
+|----------|----------|------------|-------------|
+| `GET /products` | ✅ | ✅ | ✅ |
+| `GET /products/:id` | ✅ | ✅ | ✅ |
+| `POST /products` | ❌ 401 | ❌ 403 | ✅ |
+| `PUT /products/:id` | ❌ 401 | ❌ 403 | ✅ |
+| `PATCH /products/:id` | ❌ 401 | ❌ 403 | ✅ |
+| `DELETE /products/:id` | ❌ 401 | ❌ 403 | ✅ |
+| `GET /categories` | ✅ | ✅ | ✅ |
+| `GET /categories/:id` | ✅ | ✅ | ✅ |
+| `POST /categories` | ❌ 401 | ❌ 403 | ✅ |
+| `PUT /categories/:id` | ❌ 401 | ❌ 403 | ✅ |
+| `DELETE /categories/:id` | ❌ 401 | ❌ 403 | ✅ |
+| `POST /auth/register` | ✅ | ✅ | ✅ |
+| `POST /auth/login` | ✅ | ✅ | ✅ |
 
 ## Products module
 

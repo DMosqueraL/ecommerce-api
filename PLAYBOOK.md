@@ -936,6 +936,346 @@ Agrega validación de variables de entorno con Joi:
 
 ---
 
+## Autenticación JWT en NestJS
+
+### Instalación
+
+```bash
+npm install @nestjs/jwt @nestjs/passport passport passport-jwt bcrypt
+npm install -D @types/passport-jwt @types/bcrypt
+```
+
+### Flujo completo
+
+```
+POST /auth/register
+  → AuthService.register()
+      → UsersService.findByEmail()    # verificar duplicado
+      → bcrypt.hash(password, 10)     # nunca guardar password plano
+      → UsersService.create()
+      → retornar usuario sin password
+
+POST /auth/login
+  → AuthService.login()
+      → UsersService.findByEmail()    # usuario existe?
+      → bcrypt.compare()              # password válida?
+      → user.isActive === true?       # cuenta habilitada?
+      → jwtService.sign({ sub, email, role })
+      → retornar { access_token }
+
+GET /ruta-protegida (Authorization: Bearer <token>)
+  → JwtAuthGuard.canActivate()
+      → ¿isPublic? → sí → pasar
+      → PassportStrategy.validate()   # verificar firma + extraer payload
+      → req.user = { id, email, role }
+  → RolesGuard.canActivate()
+      → ¿requiredRoles? → no → pasar
+      → req.user.role in requiredRoles? → sí → pasar / no → 403
+```
+
+### JwtStrategy
+
+```typescript
+@Injectable()
+export class JwtStrategy extends PassportStrategy(Strategy) {
+  constructor(configService: ConfigService) {
+    super({
+      jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
+      ignoreExpiration: false,
+      secretOrKey: configService.get<string>('JWT_SECRET') as string,
+    });
+  }
+
+  validate(payload: JwtPayload) {
+    return { id: payload.sub, email: payload.email, role: payload.role };
+  }
+}
+```
+
+### AuthModule
+
+```typescript
+@Module({
+  imports: [
+    UsersModule,
+    PassportModule,
+    JwtModule.registerAsync({
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      useFactory: (configService: ConfigService) => ({
+        secret: configService.get<string>('JWT_SECRET'),
+        signOptions: { expiresIn: '7d' },
+      }),
+    }),
+  ],
+  providers: [AuthService, JwtStrategy],
+  controllers: [AuthController],
+})
+export class AuthModule {}
+```
+
+`JwtModule.registerAsync` es necesario para leer `JWT_SECRET` desde `ConfigService` (que depende de `ConfigModule`). Si se usara `JwtModule.register({ secret: '...' })` se hardcodearía el secreto.
+
+### ⚠️ Gotchas
+| # | Gotcha |
+|---|--------|
+| 1 | `secretOrKey: configService.get<string>('JWT_SECRET') as string` — el cast es necesario porque `get()` puede retornar `undefined` y el tipo de passport-jwt lo rechaza |
+| 2 | `JwtStrategy` debe ser provider en `AuthModule`, no en `AppModule` |
+| 3 | `UsersModule` debe exportar `UsersService` para que `AuthModule` pueda inyectarlo |
+| 4 | Nunca retornar `password` en las respuestas — usar destructuring: `const { password: _, ...result } = user` |
+| 5 | `bcrypt.hash(password, 10)` — el segundo argumento es el número de salt rounds; 10 es el valor estándar |
+
+### Prompt reutilizable
+
+```
+Implementa autenticación JWT en este proyecto NestJS:
+- UsersModule con UsersService (findByEmail, findById, create) — sin controller
+- AuthModule con AuthService (register hashea con bcrypt, login valida y genera JWT)
+- JwtStrategy que extrae Bearer token y retorna { id, email, role } en req.user
+- JwtAuthGuard que omite validación en rutas @Public()
+- Registra JwtAuthGuard y RolesGuard como APP_GUARD globales en AppModule
+- Agrega JWT_SECRET a la validación Joi y al .env.example
+```
+
+---
+
+## Guards y Roles
+
+### Decoradores
+
+```typescript
+// src/common/decorators/public.decorator.ts
+export const IS_PUBLIC_KEY = 'isPublic';
+export const Public = () => SetMetadata(IS_PUBLIC_KEY, true);
+
+// src/common/decorators/roles.decorator.ts
+export const ROLES_KEY = 'roles';
+export const Roles = (...roles: string[]) => SetMetadata(ROLES_KEY, roles);
+```
+
+### JwtAuthGuard con soporte @Public()
+
+```typescript
+@Injectable()
+export class JwtAuthGuard extends AuthGuard('jwt') {
+  constructor(private readonly reflector: Reflector) {
+    super();
+  }
+
+  canActivate(context: ExecutionContext) {
+    const isPublic = this.reflector.getAllAndOverride<boolean>(IS_PUBLIC_KEY, [
+      context.getHandler(),
+      context.getClass(),
+    ]);
+    if (isPublic) return true;
+    return super.canActivate(context);
+  }
+}
+```
+
+### RolesGuard
+
+```typescript
+@Injectable()
+export class RolesGuard implements CanActivate {
+  constructor(private readonly reflector: Reflector) {}
+
+  canActivate(context: ExecutionContext): boolean {
+    const requiredRoles = this.reflector.getAllAndOverride<string[]>(ROLES_KEY, [
+      context.getHandler(),
+      context.getClass(),
+    ]);
+    if (!requiredRoles || requiredRoles.length === 0) return true;
+
+    const { user } = context.switchToHttp().getRequest();
+    if (!user || !requiredRoles.includes(user.role)) {
+      throw new ForbiddenException('No tienes permisos para realizar esta acción');
+    }
+    return true;
+  }
+}
+```
+
+### Registro global en AppModule
+
+```typescript
+import { APP_GUARD } from '@nestjs/core';
+
+providers: [
+  AppService,
+  { provide: APP_GUARD, useClass: JwtAuthGuard },  // 1º — autentica
+  { provide: APP_GUARD, useClass: RolesGuard },     // 2º — autoriza
+],
+```
+
+El orden importa: si `RolesGuard` corre antes de `JwtAuthGuard`, `req.user` aún no existe.
+
+### Uso en controllers
+
+```typescript
+@Public()           // sin token requerido
+@Get()
+findAll() { ... }
+
+@Roles('ADMIN')     // requiere token válido con role === 'ADMIN'
+@Post()
+create() { ... }
+```
+
+### Tabla de permisos por rol
+
+| Acción | GUEST (sin token) | USER | ADMIN |
+|--------|-------------------|------|-------|
+| Leer productos/categorías | ✅ | ✅ | ✅ |
+| Crear/editar/eliminar productos | ❌ 401 | ❌ 403 | ✅ |
+| Crear/editar/eliminar categorías | ❌ 401 | ❌ 403 | ✅ |
+| Registrarse / hacer login | ✅ | ✅ | ✅ |
+
+### ⚠️ Gotchas
+| # | Gotcha |
+|---|--------|
+| 1 | `getAllAndOverride` busca en el handler primero, luego en la clase — el decorador más específico gana |
+| 2 | Sin `@Public()`, todos los endpoints requieren token válido (por el guard global) |
+| 3 | `RolesGuard` confía en `req.user` que pone `JwtAuthGuard` — si el orden se invierte, `user` es `undefined` |
+| 4 | Rutas de auth (`/auth/register`, `/auth/login`) necesitan `@Public()` explícitamente o quedan bloqueadas por el guard global |
+
+### Prompt reutilizable
+
+```
+Agrega protección de endpoints con JwtAuthGuard y RolesGuard:
+1. Decorador @Public() en src/common/decorators/public.decorator.ts
+2. Decorador @Roles() en src/common/decorators/roles.decorator.ts
+3. RolesGuard en src/common/guards/roles.guard.ts — lanza 403 si el rol no coincide
+4. Modifica JwtAuthGuard para omitir validación en rutas @Public()
+5. Registra ambos guards como APP_GUARD en AppModule (JwtAuthGuard primero)
+6. En [Controller]: GET → @Public(), escritura → @Roles('ADMIN')
+```
+
+---
+
+## Relación One-to-One en Prisma
+
+### Schema
+
+```prisma
+model User {
+  id        Int      @id @default(autoincrement())
+  email     String   @unique
+  password  String
+  role      Role     @default(USER)
+  isActive  Boolean  @default(true)
+  profile   Profile?           // opcional — un User puede no tener Profile
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Profile {
+  id        Int     @id @default(autoincrement())
+  phone     String?
+  address   String?
+  docType   String?
+  docNumber String?
+  userId    Int     @unique      // @unique convierte la FK en One-to-One
+  user      User    @relation(fields: [userId], references: [id])
+}
+```
+
+La clave del One-to-One es `@unique` en la FK (`userId`). Sin ese modificador, sería una relación One-to-Many.
+
+### Diferencia con One-to-Many
+
+| | One-to-Many | One-to-One |
+|---|-------------|------------|
+| FK en el lado "muchos" | ✅ | ✅ |
+| `@unique` en la FK | ❌ | ✅ obligatorio |
+| Campo inverso | `Product[]` (array) | `Profile?` (opcional, sin array) |
+
+### Consultar con include
+
+```typescript
+// User con su perfil
+this.prisma.user.findUnique({
+  where: { id },
+  include: { profile: true },
+})
+
+// Profile con su user
+this.prisma.profile.findUnique({
+  where: { userId: id },
+  include: { user: true },
+})
+```
+
+### ⚠️ Gotchas
+| # | Gotcha |
+|---|--------|
+| 1 | Sin `@unique` en la FK, Prisma trata la relación como One-to-Many y el campo inverso es un array |
+| 2 | `profile Profile?` con `?` significa que Prisma no la incluye por defecto — necesitas `include: { profile: true }` |
+| 3 | Al crear un User con perfil anidado, usar `create: { profile: { create: {...} } }` |
+| 4 | Si un User no tiene Profile, el campo `profile` retorna `null` (no lanza error) |
+
+### Prompt reutilizable
+
+```
+Agrega al schema de Prisma una relación One-to-One entre [ModeloA] y [ModeloB]:
+- [ModeloA] tiene un campo opcional [modeloB] [ModeloB]?
+- [ModeloB] tiene userId Int @unique y la @relation correspondiente
+Crea la migración y regenera el cliente.
+```
+
+---
+
+## upsert en Prisma — insert or update idempotente
+
+### Concepto
+
+`upsert` combina `create` + `update` en una sola operación atómica:
+- Si el registro **no existe** → ejecuta `create`
+- Si el registro **ya existe** → ejecuta `update`
+
+Ideal para seeds y operaciones de sincronización donde quieres garantizar un estado sin importar si ya existe.
+
+### Sintaxis
+
+```typescript
+await prisma.user.upsert({
+  where:  { email: 'admin@ecommerce.com' },   // condición de búsqueda
+  create: { email: 'admin@ecommerce.com', password: hashed, role: 'ADMIN' },
+  update: { password: hashed, role: 'ADMIN' }, // qué actualizar si ya existe
+});
+```
+
+### Uso en el seed
+
+```typescript
+const hashed = await bcrypt.hash('Admin123!', 10);
+
+await prisma.user.upsert({
+  where:  { email: 'admin@ecommerce.com' },
+  update: { password: hashed, role: 'ADMIN', isActive: true },
+  create: { email: 'admin@ecommerce.com', password: hashed, role: 'ADMIN', isActive: true },
+});
+```
+
+Comparado con `deleteMany` + `create` (que borra todo antes), `upsert` **preserva registros existentes** que no están en el seed (útil para datos de producción).
+
+### ⚠️ Gotchas
+| # | Gotcha |
+|---|--------|
+| 1 | El campo en `where` debe tener `@unique` en el schema — de lo contrario Prisma lanza error |
+| 2 | `update` no necesita todos los campos, solo los que quieres actualizar |
+| 3 | `create` sí necesita todos los campos obligatorios |
+| 4 | A diferencia de `deleteMany` + `create`, `upsert` no borra registros que no estén en la lista |
+
+### Prompt reutilizable
+
+```
+En prisma/seed.ts reemplaza los create de [modelo] por upsert para que
+el seed sea idempotente. Usar [campo único] como clave en where.
+```
+
+---
+
 ## Extras
 
 ```
