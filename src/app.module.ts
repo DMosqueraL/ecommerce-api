@@ -9,6 +9,7 @@ import { CategoriesModule } from './categories/categories.module';
 import { UsersModule } from './users/users.module';
 import { AuthModule } from './auth/auth.module';
 import { ProfileModule } from './profile/profile.module';
+import { OrdersModule } from './orders/orders.module';
 import { JwtAuthGuard } from './auth/jwt-auth.guard';
 import { RolesGuard } from './common/guards/roles.guard';
 import { envValidationSchema } from './config/env.validation';
@@ -22,6 +23,7 @@ import { envValidationSchema } from './config/env.validation';
     UsersModule,
     AuthModule,
     ProfileModule,
+    OrdersModule,
   ],
   controllers: [AppController],
   providers: [

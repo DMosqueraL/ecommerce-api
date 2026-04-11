@@ -20,13 +20,14 @@ model Category {
 }
 
 model Product {
-  id          Int      @id @default(autoincrement())
+  id          Int         @id @default(autoincrement())
   name        String
   description String
   stock       Int
   price       Float
   categoryId  Int
-  category    Category @relation(fields: [categoryId], references: [id])
+  category    Category    @relation(fields: [categoryId], references: [id])
+  orderItems  OrderItem[]
 }
 
 enum Role {
@@ -42,6 +43,7 @@ model User {
   role      Role     @default(USER)
   isActive  Boolean  @default(true)
   profile   Profile?
+  orders    Order[]
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
@@ -54,4 +56,49 @@ model Profile {
   docNumber String?
   userId    Int     @unique
   user      User    @relation(fields: [userId], references: [id])
+}
+
+enum OrderStatus {
+  PENDING
+  CONFIRMED
+  SHIPPED
+  DELIVERED
+  CANCELLED
+}
+
+enum PaymentMethod {
+  TARJETA
+  TRANSFERENCIA
+  CONTRA_ENTREGA
+}
+
+model Order {
+  id              Int           @id @default(autoincrement())
+  userId          Int
+  user            User          @relation(fields: [userId], references: [id])
+  status          OrderStatus   @default(PENDING)
+  totalAmount     Float
+  shippingCost    Float
+  taxAmount       Float
+  grandTotal      Float
+  shippingAddress String
+  billingAddress  String
+  paymentMethod   PaymentMethod
+  shippingCompany String
+  trackingNumber  String
+  carrierPhone    String
+  items           OrderItem[]
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+}
+
+model OrderItem {
+  id        Int     @id @default(autoincrement())
+  orderId   Int
+  order     Order   @relation(fields: [orderId], references: [id])
+  productId Int
+  product   Product @relation(fields: [productId], references: [id])
+  quantity  Int
+  unitPrice Float
+  subtotal  Float
 }
