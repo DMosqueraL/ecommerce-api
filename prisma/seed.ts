@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import * as bcrypt from 'bcrypt';
 import { PrismaClient } from '../generated/prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 
@@ -184,7 +185,26 @@ const categories = [
 ];
 
 async function main() {
-  console.log('Limpiando datos existentes...');
+  console.log('Creando usuarios...');
+
+  const adminPassword = await bcrypt.hash('Admin123!', 10);
+  const userPassword = await bcrypt.hash('User123!', 10);
+
+  await prisma.user.upsert({
+    where: { email: 'admin@ecommerce.com' },
+    update: { password: adminPassword, role: 'ADMIN', isActive: true },
+    create: { email: 'admin@ecommerce.com', password: adminPassword, role: 'ADMIN', isActive: true },
+  });
+  console.log('  ✓ admin@ecommerce.com (ADMIN)');
+
+  await prisma.user.upsert({
+    where: { email: 'user@ecommerce.com' },
+    update: { password: userPassword, role: 'USER', isActive: true },
+    create: { email: 'user@ecommerce.com', password: userPassword, role: 'USER', isActive: true },
+  });
+  console.log('  ✓ user@ecommerce.com (USER)');
+
+  console.log('\nLimpiando datos existentes...');
   await prisma.product.deleteMany();
   await prisma.category.deleteMany();
 
@@ -205,7 +225,8 @@ async function main() {
 
   const totalProducts = await prisma.product.count();
   const totalCategories = await prisma.category.count();
-  console.log(`\nSeed completado: ${totalCategories} categorías, ${totalProducts} productos.`);
+  const totalUsers = await prisma.user.count();
+  console.log(`\nSeed completado: ${totalUsers} usuarios, ${totalCategories} categorías, ${totalProducts} productos.`);
 }
 
 main()
