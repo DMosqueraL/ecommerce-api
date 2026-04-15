@@ -6,6 +6,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 NestJS ecommerce API — a course project being built progressively. The app runs on port 3000 by default (overridable via `PORT` env var).
 
+## Session Workflow
+
+At the end of each development session:
+
+1. **Update CLAUDE.md** if there are new technical decisions, modules, or architecture changes
+2. **Update PLAYBOOK.md** if there are new patterns, gotchas, or reusable prompts (follow section 4 rules)
+
+Both files must stay synchronized with the actual codebase. The PLAYBOOK.md update must go through Claude Code using the standard prompt from section 4.
+
 ## Commands
 
 ```bash
@@ -63,6 +72,14 @@ If `DATABASE_URL` or `JWT_SECRET` is missing the app refuses to start with:
 ```
 Error: Config validation error: "DATABASE_URL" is required
 ```
+
+## TypeScript Configuration
+
+- Target: ES2023, module resolution: `nodenext`
+- `experimentalDecorators` and `emitDecoratorMetadata` are enabled (required for NestJS DI)
+- `noImplicitAny` is **disabled** — type annotations are optional but encouraged
+- Compiled output goes to `dist/`, which is cleaned on each build (`deleteOutDir: true`)
+- Types used in decorated method signatures must use `import type` (required by `isolatedModules` + `emitDecoratorMetadata`)
 
 ## Database
 
@@ -147,34 +164,88 @@ Standard NestJS module architecture:
 
 NestJS uses decorator-based dependency injection. Controllers handle HTTP routing (`@Controller`, `@Get`, etc.), services contain business logic (`@Injectable`), and modules wire them together (`@Module`).
 
-## Users module
+## Categories module
 
-`src/users/` — controller + service. All endpoints require `@Roles('ADMIN')`.
-
-Endpoints (`/users`):
+Endpoints (`/categories`):
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/users` | List all users (paginated, no passwords) |
-| GET | `/users/:id` | Get one user (no password); 404 if not found |
-| PATCH | `/users/:id/role` | Change role; body `{ role: 'ADMIN' \| 'USER' \| 'GUEST' }` |
-| PATCH | `/users/:id/block` | Block/unblock; body `{ isActive: boolean }` |
-| DELETE | `/users/:id` | Delete user (204); 404 if not found |
+| GET | `/categories` | List all (paginated) |
+| GET | `/categories/:id` | Get one |
+| POST | `/categories` | Create |
+| PUT | `/categories/:id` | Full replace — all fields required |
+| DELETE | `/categories/:id` | Remove (204) |
 
-`UsersService` methods:
+`CreateCategoryDto` has a single required field: `name` (unique in DB). `UpdateCategoryDto` uses `PartialType(CreateCategoryDto)`.
 
-| Method | Description |
-|--------|-------------|
-| `findByEmail(email)` | Look up by email; returns `null` if not found (used by AuthService) |
-| `findById(id)` | Look up by PK |
-| `create(data)` | Create a new user record |
-| `findAll(page, limit)` | Paginated list; `password` excluded via `select` |
-| `findOneOrFail(id)` | Find by PK; throws `404` if not found; `password` excluded |
-| `updateRole(id, role)` | Update role field; throws `404` if not found |
-| `updateBlock(id, isActive)` | Update `isActive` field; throws `404` if not found |
-| `remove(id)` | Delete user; throws `404` if not found |
+`findAll` and `findOne` include `{ products: true }` — every category response contains its full list of products.
 
-`UsersModule` exports `UsersService` so `AuthModule` can inject it.
+### Pagination
+
+`GET /categories` supports the same `page`/`limit` query params as `/products` (defaults: `page=1`, `limit=10`), with the same `{ data, total, page, limit, totalPages }` response shape.
+
+## Products module
+
+Endpoints (`/products`):
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/products` | List all |
+| GET | `/products/:id` | Get one |
+| POST | `/products` | Create |
+| PUT | `/products/:id` | Full replace — all fields required |
+| PATCH | `/products/:id` | Partial update — only sent fields updated |
+| DELETE | `/products/:id` | Remove (204) |
+
+PUT and PATCH are intentionally distinct: PUT replaces the entire resource, PATCH merges only the provided fields.
+
+Data is persisted in PostgreSQL via Prisma. `ProductsService` uses `PrismaService` directly — no repository layer. Each product requires a valid `categoryId`.
+
+`findAll` and `findOne` include `{ category: true }` — every response contains the full category object nested inside the product.
+
+`create`, `replace`, and `patch` validate that `categoryId` exists before writing to the DB. If the category is not found, a `NotFoundException` is thrown (`"Categoría con id ${id} no encontrada"`). In `patch`, the validation is skipped when `categoryId` is not present in the body.
+
+### Pagination
+
+`GET /products` supports optional `page` and `limit` query params (defaults: `page=1`, `limit=10`).
+
+`findAll` runs `findMany` and `count` in parallel with `Promise.all` and returns:
+
+```json
+{ "data": [...], "total": 25, "page": 1, "limit": 10, "totalPages": 3 }
+```
+
+`count` receives the same `where` object as `findMany` so totals always reflect the active filters.
+
+### Filters
+
+`GET /products` also supports these optional query params:
+
+| Param | Type | Description |
+|-------|------|-------------|
+| `categoryId` | integer | Filter by category |
+| `minPrice` | float | Minimum price (inclusive) |
+| `maxPrice` | float | Maximum price (inclusive) |
+| `search` | string | Substring match on `name` or `description` (case-insensitive) |
+
+The `where` object is built dynamically — only params that are present in the request are included. Pattern:
+
+```typescript
+const where = {
+  ...(categoryId !== undefined && { categoryId }),
+  ...(minPrice !== undefined || maxPrice !== undefined
+    ? { price: { ...(minPrice !== undefined && { gte: minPrice }), ...(maxPrice !== undefined && { lte: maxPrice }) } }
+    : {}),
+  ...(search !== undefined && {
+    OR: [
+      { name: { contains: search, mode: 'insensitive' as const } },
+      { description: { contains: search, mode: 'insensitive' as const } },
+    ],
+  }),
+};
+```
+
+In the controller, `categoryId` uses `ParseIntPipe({ optional: true })` and `minPrice`/`maxPrice` use `ParseFloatPipe({ optional: true })`; `search` is a plain `@Query('search')` string.
 
 ## Auth module
 
@@ -235,6 +306,35 @@ Both guards are registered globally in `AppModule` as `APP_GUARD`. Order matters
 | `GET /orders/me` | ❌ 401 | ✅ | ✅ |
 | `GET /orders/:id` | ❌ 401 | ✅ (own only) | ✅ |
 | `PATCH /orders/:id/status` | ❌ 401 | ❌ 403 | ✅ |
+
+## Users module
+
+`src/users/` — controller + service. All endpoints require `@Roles('ADMIN')`.
+
+Endpoints (`/users`):
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/users` | List all users (paginated, no passwords) |
+| GET | `/users/:id` | Get one user (no password); 404 if not found |
+| PATCH | `/users/:id/role` | Change role; body `{ role: 'ADMIN' \| 'USER' \| 'GUEST' }` |
+| PATCH | `/users/:id/block` | Block/unblock; body `{ isActive: boolean }` |
+| DELETE | `/users/:id` | Delete user (204); 404 if not found |
+
+`UsersService` methods:
+
+| Method | Description |
+|--------|-------------|
+| `findByEmail(email)` | Look up by email; returns `null` if not found (used by AuthService) |
+| `findById(id)` | Look up by PK |
+| `create(data)` | Create a new user record |
+| `findAll(page, limit)` | Paginated list; `password` excluded via `select` |
+| `findOneOrFail(id)` | Find by PK; throws `404` if not found; `password` excluded |
+| `updateRole(id, role)` | Update role field; throws `404` if not found |
+| `updateBlock(id, isActive)` | Update `isActive` field; throws `404` if not found |
+| `remove(id)` | Delete user; throws `404` if not found |
+
+`UsersModule` exports `UsersService` so `AuthModule` can inject it.
 
 ## Profile module
 
@@ -304,89 +404,6 @@ Endpoints (`/orders`):
 
 The `where` object is built dynamically via `buildWhere()` — same spread-conditional pattern as products. `startDate`/`endDate` map to `createdAt: { gte, lte }`.
 
-## Products module
-
-Endpoints (`/products`):
-
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/products` | List all |
-| GET | `/products/:id` | Get one |
-| POST | `/products` | Create |
-| PUT | `/products/:id` | Full replace — all fields required |
-| PATCH | `/products/:id` | Partial update — only sent fields updated |
-| DELETE | `/products/:id` | Remove (204) |
-
-PUT and PATCH are intentionally distinct: PUT replaces the entire resource, PATCH merges only the provided fields.
-
-Data is persisted in PostgreSQL via Prisma. `ProductsService` uses `PrismaService` directly — no repository layer. Each product requires a valid `categoryId`.
-
-`findAll` and `findOne` include `{ category: true }` — every response contains the full category object nested inside the product.
-
-`create`, `replace`, and `patch` validate that `categoryId` exists before writing to the DB. If the category is not found, a `NotFoundException` is thrown (`"Categoría con id ${id} no encontrada"`). In `patch`, the validation is skipped when `categoryId` is not present in the body.
-
-### Pagination
-
-`GET /products` supports optional `page` and `limit` query params (defaults: `page=1`, `limit=10`).
-
-`findAll` runs `findMany` and `count` in parallel with `Promise.all` and returns:
-
-```json
-{ "data": [...], "total": 25, "page": 1, "limit": 10, "totalPages": 3 }
-```
-
-`count` receives the same `where` object as `findMany` so totals always reflect the active filters.
-
-### Filters
-
-`GET /products` also supports these optional query params:
-
-| Param | Type | Description |
-|-------|------|-------------|
-| `categoryId` | integer | Filter by category |
-| `minPrice` | float | Minimum price (inclusive) |
-| `maxPrice` | float | Maximum price (inclusive) |
-| `search` | string | Substring match on `name` or `description` (case-insensitive) |
-
-The `where` object is built dynamically — only params that are present in the request are included. Pattern:
-
-```typescript
-const where = {
-  ...(categoryId !== undefined && { categoryId }),
-  ...(minPrice !== undefined || maxPrice !== undefined
-    ? { price: { ...(minPrice !== undefined && { gte: minPrice }), ...(maxPrice !== undefined && { lte: maxPrice }) } }
-    : {}),
-  ...(search !== undefined && {
-    OR: [
-      { name: { contains: search, mode: 'insensitive' as const } },
-      { description: { contains: search, mode: 'insensitive' as const } },
-    ],
-  }),
-};
-```
-
-In the controller, `categoryId` uses `ParseIntPipe({ optional: true })` and `minPrice`/`maxPrice` use `ParseFloatPipe({ optional: true })`; `search` is a plain `@Query('search')` string.
-
-## Categories module
-
-Endpoints (`/categories`):
-
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/categories` | List all (paginated) |
-| GET | `/categories/:id` | Get one |
-| POST | `/categories` | Create |
-| PUT | `/categories/:id` | Full replace — all fields required |
-| DELETE | `/categories/:id` | Remove (204) |
-
-`CreateCategoryDto` has a single required field: `name` (unique in DB). `UpdateCategoryDto` uses `PartialType(CreateCategoryDto)`.
-
-`findAll` and `findOne` include `{ products: true }` — every category response contains its full list of products.
-
-### Pagination
-
-`GET /categories` supports the same `page`/`limit` query params as `/products` (defaults: `page=1`, `limit=10`), with the same `{ data, total, page, limit, totalPages }` response shape.
-
 ## DTOs and validation
 
 DTOs live in `src/<feature>/dto/`. All validation messages are in Spanish.
@@ -398,6 +415,66 @@ DTOs live in `src/<feature>/dto/`. All validation messages are in Spanish.
 `ValidationPipe` is registered globally with `whitelist: true` (strips unknown fields).
 
 When adding a new DTO field, only update the base `CreateProductDto` — the other two inherit automatically.
+
+## Response DTOs
+
+All controller endpoints return Response DTOs instead of raw Prisma entities. DTOs control the exact shape of responses, prevent leaking internal fields (e.g. `password`), and generate accurate Swagger schemas.
+
+**File structure per module:**
+
+```
+src/<module>/dto/<module>-response.dto.ts   # Full response DTO for the module
+src/<module>/dto/<module>-basic.dto.ts      # Minimal DTO for when the entity appears nested inside another
+```
+
+**Select constant (users module pattern):**
+
+```typescript
+// src/users/users.constants.ts
+export const USER_PUBLIC_SELECT = {
+  id: true, email: true, role: true,
+  isActive: true, createdAt: true, updatedAt: true,
+} as const;
+```
+
+Using `as const` lets TypeScript infer the literal type, which Prisma uses to infer the return type of `select` queries — no manual typing needed.
+
+**DTO class pattern:**
+
+```typescript
+export class UserResponseDto {
+  @ApiProperty() id: number;
+  // ... other fields
+
+  constructor(user: UserPublic) {
+    this.id = user.id;
+    // ...
+  }
+}
+```
+
+Each DTO has a constructor that takes the Prisma-returned shape and maps fields explicitly. No class-transformer — transformation happens manually.
+
+**Controller transformation:**
+
+```typescript
+// Singular
+return new UserResponseDto(user);
+
+// Paginated list — preserve pagination envelope, map only data
+return { ...result, data: result.data.map((u) => new UserResponseDto(u)) };
+```
+
+**Nested entities — BasicDto convention:**
+
+When entity A contains entity B, use a `BasicDto` for B to avoid circular references and keep the response lean:
+
+- `ProductResponseDto.category` → `CategoryBasicDto` (only `id`, `name`)
+- `CategoryResponseDto.products` → `ProductBasicDto` (only `id`, `name`, `price`, `stock`)
+
+For Swagger, nested DTOs use `@ApiProperty({ type: () => CategoryBasicDto })` (lazy reference) and arrays use `isArray: true`.
+
+**Modules implemented:** Users, Products, Categories.
 
 ## Error response format
 
@@ -435,11 +512,3 @@ SwaggerModule.setup('api', app, SwaggerModule.createDocument(app, config));
 | `@ApiProperty({ description, example })` | DTO fields | Documents schema fields with descriptions and example values |
 
 `@ApiProperty` is added only to the base `CreateProductDto` and `CreateCategoryDto`. `ReplaceProductDto` and `UpdateProductDto` inherit the decorators automatically via class extension and `PartialType`.
-
-## TypeScript Configuration
-
-- Target: ES2023, module resolution: `nodenext`
-- `experimentalDecorators` and `emitDecoratorMetadata` are enabled (required for NestJS DI)
-- `noImplicitAny` is **disabled** — type annotations are optional but encouraged
-- Compiled output goes to `dist/`, which is cleaned on each build (`deleteOutDir: true`)
-- Types used in decorated method signatures must use `import type` (required by `isolatedModules` + `emitDecoratorMetadata`)

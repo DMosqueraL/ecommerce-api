@@ -3,8 +3,8 @@
 > **Proyecto:** ecommerce-api
 > **Stack:** NestJS · Prisma 7 · PostgreSQL · TypeScript · JWT
 > **Propósito:** referencia técnica y prompts reutilizables para desarrollo asistido por Claude Code.
-> **Versión:** `2.1.0`
-> **Última actualización:** 2026-04-13
+> **Versión:** `2.3.0`
+> **Última actualización:** 2026-04-14
 > **Mantenido por:** Doris Mosquera
 
 ---
@@ -35,6 +35,8 @@
    - 6.16 [Variables de entorno con Joi](#616-variables-de-entorno-con-joi) ⭐
    - 6.17 [Módulo de Perfil (One-to-One)](#617-módulo-de-perfil-one-to-one) ⭐
    - 6.18 [Módulo de Órdenes](#618-módulo-de-órdenes) ⭐
+   - 6.19 [Máquina de estados de Order](#619-máquina-de-estados-de-order) ⭐
+   - 6.20 [Response DTOs](#620-response-dtos) ⭐
 7. [Casos edge conocidos](#7-casos-edge-conocidos)
 8. [Tarjetas de estudio](#8-tarjetas-de-estudio)
 9. [Comandos útiles (Windows)](#9-comandos-útiles-windows)
@@ -170,8 +172,9 @@ Este documento es **living documentation** — debe evolucionar con el proyecto,
 
 ### Quién lo actualiza
 
-- **Doris** manualmente para cambios pequeños (gotcha nuevo, regla nueva)
-- **Claude Code** mediante el prompt estándar (ver al final de esta sección) para cambios grandes
+- **Siempre vía Claude Code** usando el prompt estándar de esta sección.
+  Esto garantiza que los cambios respetan el formato, el diff es revisable
+  antes de guardar, y no se pierde contexto entre sesiones.
 
 ### Qué se agrega y dónde
 
@@ -183,6 +186,24 @@ Este documento es **living documentation** — debe evolucionar con el proyecto,
 | Nueva regla global | Sección 1 (con justificación en columna "Por qué importa") |
 | Nueva convención | Sección 2 |
 | Nuevo ítem de revisión | Sección 3 |
+
+### Regla crítica: leer archivos fuente antes de documentar código
+
+Cuando se actualiza un capítulo con código de un módulo existente del proyecto,
+el prompt DEBE instruir explícitamente a Claude Code para que lea el archivo
+fuente real (Read tool) antes de escribir el código en el capítulo.
+
+**Por qué existe esta regla.** En la migración v1 → v2 se detectó que Claude
+Code reconstruyó código de memoria en los capítulos 6.14, 6.17 y 6.18, generando
+versiones que divergen del código real del proyecto. El playbook dejó de ser
+una referencia confiable para esos capítulos hasta que se corrigió manualmente.
+
+**Cómo aplicarla.** En el prompt de actualización, incluir explícitamente:
+
+> "Antes de escribir el código del capítulo X, usa el Read tool para leer
+> `ruta/al/archivo.ts`. No reconstruyas el código de memoria."
+
+Ver el prompt estándar de esta sección como ejemplo de aplicación.
 
 ### Formato obligatorio para capítulos nuevos
 
@@ -293,7 +314,7 @@ npx prisma db seed
 
 ## 6. Capítulos temáticos
 
-### 6.1 Inicio del proyecto ⭐
+### 6.1 Inicio del proyecto
 
 **Concepto.** Arrancar un proyecto NestJS con Claude Code requiere dos pasos previos a cualquier feature: orientar a Claude Code sobre la estructura actual del proyecto, y crear el archivo `CLAUDE.md` que actúa como memoria persistente entre sesiones. Sin `CLAUDE.md`, Claude Code no tiene contexto del stack, las convenciones ni las decisiones técnicas ya tomadas — cada sesión nueva empieza desde cero y puede proponer cambios inconsistentes.
 
@@ -353,7 +374,7 @@ Analiza este proyecto NestJS y:
 
 ---
 
-### 6.2 Módulos y arquitectura ⭐
+### 6.2 Módulos y arquitectura
 
 **Concepto.** NestJS organiza las funcionalidades en módulos, cada uno con su controlador (routing HTTP), servicio (lógica de negocio) y DTOs (contratos de entrada/salida). Esta separación de responsabilidades hace el código testeable y escalable: el controller no debe tener lógica, el servicio no debe conocer HTTP.
 
@@ -427,7 +448,7 @@ Crea el módulo de [entidad] en src/[entidad]/ con:
 
 ---
 
-### 6.3 Validación con class-validator ⭐
+### 6.3 Validación con class-validator
 
 **Concepto.** Los DTOs con `class-validator` son el contrato de entrada de cada endpoint. Cuando el `ValidationPipe` global tiene `whitelist: true`, cualquier campo no declarado en el DTO es eliminado silenciosamente antes de llegar al servicio — esto previene que datos inesperados lleguen a Prisma o contaminen la lógica de negocio. Sin `class-validator`, los datos sucios atraviesan todo el stack.
 
@@ -498,7 +519,7 @@ Conecta los DTOs al controlador con @Body().
 
 ---
 
-### 6.4 Prisma 7: integración base ⭐
+### 6.4 Prisma 7: integración base
 
 **Concepto.** Prisma es el ORM que usa este proyecto para hablar con PostgreSQL. La versión 7 introdujo cambios importantes respecto a versiones anteriores: el cliente se genera localmente (no se importa de `@prisma/client`), la URL de conexión se separó del schema, y el `PrismaClient` requiere un adapter explícito en el constructor. Estos cambios rompen tutoriales viejos de internet — por eso este capítulo existe.
 
@@ -620,7 +641,7 @@ Integra Prisma 7 con PostgreSQL en este proyecto NestJS:
 
 ---
 
-### 6.5 Prisma 7: relaciones ⭐
+### 6.5 Prisma 7: relaciones
 
 **Concepto.** En bases de datos relacionales, la llave foránea (FK) siempre vive en el lado "muchos" de la relación. En Prisma, además de la columna FK, se declaran campos de relación virtuales en ambos modelos — estos no generan columnas en la DB pero permiten usar `include` para obtener datos relacionados. Una confusión frecuente es pensar que `Product[]` en Category crea una columna real en la tabla Category: no lo hace, es solo una directiva para el cliente Prisma.
 
@@ -705,7 +726,7 @@ Actualizar el DTO de [ModeloHijo] para incluir [padreId] como campo obligatorio.
 
 ---
 
-### 6.6 Prisma 7: queries con include ⭐
+### 6.6 Prisma 7: queries con include
 
 **Concepto.** Por defecto, Prisma solo devuelve los campos escalares del modelo consultado — relaciones no se incluyen. Para obtener datos relacionados, se necesita `include`. Sin `include`, una query de productos devuelve `categoryId: 2` (el número de la FK) pero no el objeto `category` completo. `include` instruye a Prisma a hacer el JOIN y anidar el resultado.
 
@@ -815,7 +836,7 @@ completo de [relacion] en cada [entidad].
 
 ---
 
-### 6.7 Prisma 7: validación de FK ⭐
+### 6.7 Prisma 7: validación de FK
 
 **Concepto.** Cuando se intenta crear un registro con una FK que no existe en la tabla padre, Prisma lanza un error de constraint de base de datos (código `P2003`). Sin manejo explícito, este error llega al cliente como un `500 Internal Server Error` con un mensaje técnico incomprensible. La solución es interceptarlo antes de la query de Prisma: verificar que la entidad referenciada exista y lanzar un `404` con un mensaje claro si no.
 
@@ -882,7 +903,7 @@ En patch, solo valida si [fk_field] está presente en el body (if (data.[fk_fiel
 
 ---
 
-### 6.8 Prisma 7: seeding ⭐
+### 6.8 Prisma 7: seeding
 
 **Concepto.** El seed es un script que puebla la DB con datos iniciales reproducibles — útil para desarrollo, demos y pruebas. En Prisma 7, el seed se configura en `prisma.config.ts` bajo `migrations.seed` (no en `package.json` como en versiones anteriores). La herramienta de ejecución importa: `ts-node` falla porque el cliente generado usa imports `.js` que `ts-node` en modo CommonJS no puede resolver. `tsx` maneja ambos formatos sin configuración adicional.
 
@@ -965,7 +986,7 @@ El seed debe ser idempotente: deleteMany en orden hijo → padre, luego insertar
 
 ---
 
-### 6.9 Prisma 7: upsert ⭐
+### 6.9 Prisma 7: upsert
 
 **Concepto.** `upsert` combina `create` + `update` en una operación atómica: si el registro no existe lo crea; si ya existe lo actualiza. Es la alternativa a `deleteMany + create` para seeds que deben preservar datos de producción existentes. La diferencia clave: `deleteMany + create` borra todo y reinserta; `upsert` solo toca los registros que están en la lista, dejando el resto intacto.
 
@@ -1028,7 +1049,7 @@ En create, incluir todos los campos obligatorios.
 
 ---
 
-### 6.10 Paginación ⭐
+### 6.10 Paginación
 
 **Concepto.** `skip` descarta los primeros N registros; `take` limita cuántos se devuelven. Juntos implementan paginación offset estándar: `skip = (page - 1) * limit`. Las dos queries (`findMany` y `count`) se ejecutan en paralelo con `Promise.all` para no hacer una esperar a la otra — en una tabla grande, la diferencia de latencia es notable.
 
@@ -1101,7 +1122,7 @@ En el controller agrega @Query('page') y @Query('limit') con ParseIntPipe({ opti
 
 ---
 
-### 6.11 Filtros dinámicos ⭐
+### 6.11 Filtros dinámicos
 
 **Concepto.** Construir el objeto `where` de Prisma condicionalmente con spread operator — solo se incluyen las propiedades cuyos valores están definidos. Así una query sin filtros devuelve todo, y cada filtro que llega se aplica de forma aditiva (AND implícito de Prisma). La clave es distinguir "el filtro no vino" (`undefined`) de "el filtro vino con valor falsy" (`0`, `""`, `false`) — para esto se compara explícitamente con `!== undefined`, nunca con `if (value)`.
 
@@ -1181,7 +1202,7 @@ En el controller agregar los @Query params con ParseIntPipe/ParseFloatPipe donde
 
 ---
 
-### 6.12 Autenticación JWT ⭐
+### 6.12 Autenticación JWT
 
 **Concepto.** JWT (JSON Web Token) es un mecanismo stateless para autenticar usuarios. En lugar de que el servidor recuerde quién está logueado (sesiones), el cliente lleva un token firmado que el servidor puede verificar en cada request sin tocar la base de datos. El token contiene un *payload* con los datos del usuario y una *firma* hecha con un secreto que solo el servidor conoce — si alguien modifica el token, la firma deja de ser válida y el servidor lo rechaza.
 
@@ -1321,7 +1342,7 @@ Implementa autenticación JWT en este proyecto NestJS:
 
 ---
 
-### 6.13 Guards y Roles ⭐
+### 6.13 Guards y Roles
 
 **Concepto.** NestJS separa autenticación y autorización en dos guards distintos que corren en orden. `JwtAuthGuard` (autenticación) verifica que el token JWT sea válido y carga el usuario en `req.user`. `RolesGuard` (autorización) lee la metadata de `@Roles()` y verifica que `req.user.role` esté en la lista de roles permitidos. El orden es crítico: si `RolesGuard` corre primero, `req.user` aún no existe y `RolesGuard` falla con un error no manejado.
 
@@ -1449,42 +1470,65 @@ Agrega protección de endpoints con JwtAuthGuard y RolesGuard:
 
 ---
 
-### 6.14 Manejo de errores ⭐
+### 6.14 Manejo de errores
 
 **Concepto.** NestJS devuelve errores en un formato propio. Para estandarizarlo y agregar campos útiles como `timestamp` y `path`, se implementa un `HttpExceptionFilter` global. El problema principal que resuelve es el de los errores de validación: por defecto, múltiples errores de `class-validator` se concatenan en un solo string — inútil para una UI que necesita mostrar cada error en su campo correspondiente. El filtro los desempaca en un array.
+
+El filtro usa `@Catch()` sin argumento (no `@Catch(HttpException)`) — esto captura **todas** las excepciones no manejadas, incluyendo errores de Prisma, errores de runtime, etc. Sin esto, un `P2003` de Prisma llegaría al cliente con un stack trace técnico completo. Con `@Catch()` llega como 500 con mensaje limpio. Maneja `exception: unknown` con type guard antes de acceder a sus propiedades, y extrae la lógica de desempaque a un método privado `resolveResponse()` para separar responsabilidades.
 
 El endpoint `DELETE` tiene una particularidad en NestJS: si el método usa `return`, NestJS serializa el resultado como body. Sin `return` (solo `await`), el body queda vacío y se envía el código 204 limpio. En Postman, el número `1` que aparece en el panel de body vacío NO es un body real — es el indicador de línea del panel vacío.
 
 **Patrón base — `HttpExceptionFilter`.**
 
 ```typescript
-// src/common/filters/http-exception.filter.ts
-import { ExceptionFilter, Catch, ArgumentsHost, HttpException } from '@nestjs/common';
-import type { Response, Request } from 'express';
+import {
+  ExceptionFilter,
+  Catch,
+  ArgumentsHost,
+  HttpException,
+  HttpStatus,
+} from '@nestjs/common';
+import type { Request, Response } from 'express';
 
-@Catch(HttpException)
+@Catch()
 export class HttpExceptionFilter implements ExceptionFilter {
-  catch(exception: HttpException, host: ArgumentsHost) {
+  catch(exception: unknown, host: ArgumentsHost): void {
     const ctx = host.switchToHttp();
     const response = ctx.getResponse<Response>();
     const request = ctx.getRequest<Request>();
-    const status = exception.getStatus();
-    const exceptionResponse = exception.getResponse();
 
-    const message =
-      typeof exceptionResponse === 'object' && 'message' in exceptionResponse
-        ? exceptionResponse['message']
-        : exception.message;
+    const statusCode =
+      exception instanceof HttpException
+        ? exception.getStatus()
+        : HttpStatus.INTERNAL_SERVER_ERROR;
 
-    const isValidationError = Array.isArray(message);
+    const { message, errors } =
+      exception instanceof HttpException
+        ? this.resolveResponse(exception)
+        : { message: 'Error interno del servidor', errors: undefined };
 
-    response.status(status).json({
-      statusCode: status,
-      message: isValidationError ? 'Error de validación' : message,
-      ...(isValidationError && { errors: message }),
+    response.status(statusCode).json({
+      statusCode,
+      message,
+      ...(errors && { errors }),
       timestamp: new Date().toISOString(),
       path: request.url,
     });
+  }
+
+  private resolveResponse(exception: HttpException): {
+    message: string;
+    errors?: string[];
+  } {
+    const response = exception.getResponse();
+    if (typeof response === 'string') return { message: response };
+    if (typeof response === 'object' && 'message' in response) {
+      const msg = (response as Record<string, unknown>).message;
+      if (Array.isArray(msg))
+        return { message: 'Error de validación', errors: msg };
+      return { message: String(msg) };
+    }
+    return { message: exception.message };
   }
 }
 ```
@@ -1524,6 +1568,7 @@ Respuestas del filtro:
 | 2 | `DELETE` con `return` devuelve body con el resultado del servicio | NestJS serializa cualquier valor retornado. Sin `return`, el body está vacío y el 204 es correcto. |
 | 3 | El filtro debe registrarse en `main.ts` con `app.useGlobalFilters()` ANTES de `app.listen()` | Si se registra después, no captura errores del bootstrap. |
 | 4 | Postman muestra `1` en el body de un DELETE 204 | Es el indicador de línea del panel vacío de Postman. No es un body real — el comportamiento es correcto. |
+| 5 | `@Catch()` captura excepciones no-HTTP como 500 | Sin este patrón, un error P2003 de Prisma no manejado llega al cliente con stack trace técnico completo. Con `@Catch()` llega como 500 con "Error interno del servidor" — mensaje limpio para el cliente; el detalle queda en los logs del servidor. |
 
 **Anti-patrones.**
 
@@ -1551,7 +1596,7 @@ Crea un filtro global de excepciones en src/common/filters/http-exception.filter
 
 ---
 
-### 6.15 Swagger ⭐
+### 6.15 Swagger
 
 **Concepto.** Swagger/OpenAPI genera documentación interactiva automáticamente a partir del código. En NestJS se configura en `main.ts` y se complementa con decoradores en controllers y DTOs. Sin `@ApiProperty`, Swagger muestra los schemas de los DTOs vacíos — el equipo de frontend no sabe qué campos enviar.
 
@@ -1636,7 +1681,7 @@ Integra Swagger en este proyecto NestJS:
 
 ---
 
-### 6.16 Variables de entorno con Joi ⭐
+### 6.16 Variables de entorno con Joi
 
 **Concepto.** Validar variables de entorno al inicio de la aplicación evita errores crípticos en runtime. Sin validación, una app puede arrancar aparentemente bien con `DATABASE_URL` ausente y fallar solo cuando intenta la primera query — con un error de conexión difícil de trazar. Con Joi, la app falla inmediatamente al arrancar con un mensaje claro: `Config validation error: "DATABASE_URL" is required`.
 
@@ -1713,11 +1758,13 @@ Agrega validación de variables de entorno con Joi:
 
 ---
 
-### 6.17 Módulo de Perfil (One-to-One) ⭐
+### 6.17 Módulo de Perfil (One-to-One)
 
 **Concepto.** Una relación One-to-One en Prisma se declara igual que One-to-Many, con una diferencia clave: la FK tiene `@unique`. Este constraint garantiza que solo puede existir un Profile por User. Sin `@unique`, la relación sería One-to-Many y el campo inverso en User sería `Profile[]` (array) en lugar de `Profile?` (singular opcional).
 
 El módulo de perfil tiene lógica de acceso distinta a otros módulos: cualquier usuario autenticado (cualquier rol) puede gestionar su propio perfil, pero nunca el de otro. El `userId` siempre viene de `req.user.id` — del JWT — nunca del body. Aceptarlo en el body permitiría que un usuario modifique el perfil de otro.
+
+`findByUserId` no es `async` — retorna la Promise de Prisma directamente sin `await`, evitando una microtask innecesaria cuando el caller ya hace `await` por su cuenta. `create` y `update` usan `this.findByUserId()` como helper interno en lugar de llamar a `this.prisma.profile.findUnique()` directamente, centralizando el acceso al perfil y evitando duplicar la query.
 
 **Patrón base — Schema One-to-One.**
 
@@ -1747,20 +1794,34 @@ model Profile {
 **Patrón base — Servicio.**
 
 ```typescript
-async findByUserId(userId: number) {
-  return this.prisma.profile.findUnique({ where: { userId } }); // retorna null si no existe
-}
+import {
+  Injectable,
+  ConflictException,
+  NotFoundException,
+} from '@nestjs/common';
+import { PrismaService } from '../prisma/prisma.service';
+import type { CreateProfileDto } from './dto/create-profile.dto';
+import type { UpdateProfileDto } from './dto/update-profile.dto';
 
-async create(userId: number, data: CreateProfileDto) {
-  const existing = await this.prisma.profile.findUnique({ where: { userId } });
-  if (existing) throw new ConflictException('El perfil ya existe');
-  return this.prisma.profile.create({ data: { ...data, userId } });
-}
+@Injectable()
+export class ProfileService {
+  constructor(private readonly prisma: PrismaService) {}
 
-async update(userId: number, data: UpdateProfileDto) {
-  const existing = await this.prisma.profile.findUnique({ where: { userId } });
-  if (!existing) throw new NotFoundException('El perfil no existe');
-  return this.prisma.profile.update({ where: { userId }, data });
+  findByUserId(userId: number) {
+    return this.prisma.profile.findUnique({ where: { userId } });
+  }
+
+  async create(userId: number, data: CreateProfileDto) {
+    const existing = await this.findByUserId(userId);
+    if (existing) throw new ConflictException('Ya tienes un perfil creado');
+    return this.prisma.profile.create({ data: { ...data, userId } });
+  }
+
+  async update(userId: number, data: UpdateProfileDto) {
+    const existing = await this.findByUserId(userId);
+    if (!existing) throw new NotFoundException('Perfil no encontrado');
+    return this.prisma.profile.update({ where: { userId }, data });
+  }
 }
 ```
 
@@ -1809,6 +1870,8 @@ Diferencia One-to-One vs One-to-Many:
 | 2 | `profile Profile?` con `?` — Prisma no incluye el perfil por defecto en queries de User | Hay que usar `include: { profile: true }` cuando se necesita el perfil anidado en el User. |
 | 3 | Si un User no tiene Profile, `findUnique({ where: { userId } })` retorna `null` | El endpoint `GET /profile/me` debe retornar `null` en este caso, no lanzar 404. |
 | 4 | `userId` siempre de `req.user.id` — nunca del body | Si se acepta en el body, un usuario podría crear/modificar el perfil de otro usuario. |
+| 5 | `findByUserId` no es `async` — retorna la Promise directamente | Evita una microtask innecesaria. `create` y `update` llaman `this.findByUserId()` como helper en lugar de duplicar `this.prisma.profile.findUnique()`. |
+| 6 | Mensajes exactos: `'Ya tienes un perfil creado'` (409) y `'Perfil no encontrado'` (404) | Son los mensajes que retorna el código real — documentar el texto exacto evita divergencias entre el playbook y el código. |
 
 **Anti-patrones.**
 
@@ -1816,6 +1879,7 @@ Diferencia One-to-One vs One-to-Many:
 - ❌ Usar `@Roles('USER')` en endpoints de perfil — excluiría a los ADMINs de su propio perfil
 - ❌ Olvidar `@unique` en `userId` del schema de Profile
 - ❌ Crear el perfil sin verificar si ya existe (Prisma lanza `P2002` sin control)
+- ❌ Llamar `this.prisma.profile.findUnique()` directamente en `create`/`update` en lugar de usar el helper `findByUserId()`
 
 **Prompt reutilizable.**
 
@@ -1843,9 +1907,11 @@ Todos los campos opcionales: phone, address, docType, docNumber.
 
 ---
 
-### 6.18 Módulo de Órdenes ⭐
+### 6.18 Módulo de Órdenes
 
 **Concepto.** El módulo de órdenes es el más complejo del proyecto: involucra transacciones, cálculo de precios, validaciones de stock, y permisos diferenciados por rol. La lógica de creación está envuelta en `prisma.$transaction` para garantizar atomicidad — si falla cualquier paso, todo se revierte. Dentro del callback solo se usa `tx` (nunca `this.prisma`) porque las queries fuera del callback escapan la transacción sin error visible.
+
+La implementación corrige 5 bugs críticos de la versión inicial: (1) el stock no se descontaba al crear una orden → se agrega `decrement` atómico dentro de la `$transaction`; (2) la validación de stock ocurría fuera de la transacción → se mueve adentro, después del lock; (3) sin lock pesimista dos requests concurrentes podían vender el mismo stock → se usa `$queryRaw FOR UPDATE` antes de validar; (4) la cancelación no devolvía el stock → se usa `$transaction` que hace `increment` + update de estado atómicamente; (5) items duplicados en el mismo pedido causaban doble lock → se agrupan por `productId` con `Map` antes de entrar a la transacción.
 
 El módulo también introduce acceso diferenciado: `GET /orders/:id` funciona tanto para ADMIN como para USER, pero el servicio devuelve 403 si un USER intenta ver una orden que no es suya. Cuando se agregan columnas `NOT NULL` sin default a tablas con datos existentes, `migrate dev` falla — se usa el flujo de migración manual con SQL explícito.
 
@@ -1853,40 +1919,139 @@ El módulo también introduce acceso diferenciado: `GET /orders/:id` funciona ta
 
 ```typescript
 async create(userId: number, dto: CreateOrderDto) {
+  // Agrupar items duplicados: quantities suman, discountPercent toma el máximo
+  const groupedMap = new Map<number, { quantity: number; discountPercent: number }>();
+  for (const item of dto.items) {
+    const existing = groupedMap.get(item.productId);
+    if (existing) {
+      existing.quantity += item.quantity;
+      existing.discountPercent = Math.max(
+        existing.discountPercent,
+        item.discountPercent ?? 0,
+      );
+    } else {
+      groupedMap.set(item.productId, {
+        quantity: item.quantity,
+        discountPercent: item.discountPercent ?? 0,
+      });
+    }
+  }
+  const groupedItems = Array.from(groupedMap.entries()).map(
+    ([productId, data]) => ({ productId, ...data }),
+  );
+
   return this.prisma.$transaction(async (tx) => {
+    const itemsData: Array<{
+      productId: number; quantity: number; price: number;
+      discountPercent: number; discountAmount: number;
+      finalPrice: number; subtotal: number;
+    }> = [];
     let totalAmount = 0;
-    const items = [];
 
-    for (const item of dto.items) {
-      const product = await tx.product.findUnique({ where: { id: item.productId } });
-      if (!product) throw new NotFoundException(`Producto con id ${item.productId} no encontrado`);
+    for (const item of groupedItems) {
+      // Lock pesimista: bloquea la fila antes de cualquier validación
+      const rows = await tx.$queryRaw<Product[]>`
+        SELECT * FROM "Product" WHERE id = ${item.productId} FOR UPDATE
+      `;
+      const product = rows[0];
+
+      if (!product)
+        throw new NotFoundException(`Producto con id ${item.productId} no encontrado`);
       if (product.stock < item.quantity)
-        throw new BadRequestException(`Stock insuficiente para ${product.name}`);
+        throw new BadRequestException(
+          `Stock insuficiente para "${product.name}". Disponible: ${product.stock}, solicitado: ${item.quantity}`,
+        );
 
-      const price = product.price;                              // precio congelado
-      const discountPercent = item.discountPercent ?? 0;
-      const discountAmount = price * discountPercent / 100;
+      const price = product.price;
+      const discountPercent = item.discountPercent;
+      const discountAmount = (price * discountPercent) / 100;
       const finalPrice = price - discountAmount;
       const subtotal = finalPrice * item.quantity;
       totalAmount += subtotal;
 
-      items.push({ productId: item.productId, quantity: item.quantity,
-        price, discountPercent, discountAmount, finalPrice, subtotal });
+      itemsData.push({
+        productId: item.productId, quantity: item.quantity, price,
+        discountPercent, discountAmount, finalPrice, subtotal,
+      });
     }
 
     const taxAmount = totalAmount * 0.19;
-    const shippingCost = dto.paymentMethod === 'CONTRA_ENTREGA' ? 20000 : 15000;
+    const shippingCost =
+      dto.paymentMethod === PaymentMethod.CONTRA_ENTREGA ? 20000 : 15000;
     const grandTotal = totalAmount + taxAmount + shippingCost;
 
-    return tx.order.create({
+    const order = await tx.order.create({
       data: {
-        userId, status: 'PENDING', totalAmount, taxAmount, shippingCost, grandTotal,
-        shippingAddress: dto.shippingAddress, billingAddress: dto.billingAddress,
+        userId, totalAmount, taxAmount, shippingCost, grandTotal,
+        shippingAddress: dto.shippingAddress,
+        billingAddress: dto.billingAddress,
         paymentMethod: dto.paymentMethod,
-        items: { create: items },
+        shippingCompany: dto.shippingCompany,
+        trackingNumber: dto.trackingNumber,
+        carrierPhone: dto.carrierPhone,
+        items: { create: itemsData },
       },
-      include: { items: true },
+      include: ITEMS_INCLUDE,
     });
+
+    // Decrement atómico de stock después de crear la orden
+    for (const item of groupedItems) {
+      await tx.product.update({
+        where: { id: item.productId },
+        data: { stock: { decrement: item.quantity } },
+      });
+    }
+
+    return order;
+  });
+}
+```
+
+**Patrón base — Máquina de estados (`updateStatus`).**
+
+```typescript
+private readonly VALID_TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
+  [OrderStatus.PENDING]:   [OrderStatus.CONFIRMED, OrderStatus.CANCELLED],
+  [OrderStatus.CONFIRMED]: [OrderStatus.SHIPPED,   OrderStatus.CANCELLED],
+  [OrderStatus.SHIPPED]:   [OrderStatus.DELIVERED],
+  [OrderStatus.DELIVERED]: [],
+  [OrderStatus.CANCELLED]: [],
+};
+
+async updateStatus(id: number, dto: UpdateStatusDto) {
+  const order = await this.prisma.order.findUnique({ where: { id } });
+  if (!order)
+    throw new NotFoundException(`Pedido con id ${id} no encontrado`);
+
+  const validNext = this.VALID_TRANSITIONS[order.status];
+  if (!validNext.includes(dto.status))
+    throw new BadRequestException(
+      `No se puede cambiar el estado de ${order.status} a ${dto.status}`,
+    );
+
+  // Cancelación: devolver stock en la misma transacción que el cambio de estado
+  if (dto.status === OrderStatus.CANCELLED) {
+    return this.prisma.$transaction(async (tx) => {
+      const items = await tx.orderItem.findMany({ where: { orderId: id } });
+      for (const item of items) {
+        await tx.product.update({
+          where: { id: item.productId },
+          data: { stock: { increment: item.quantity } },
+        });
+      }
+      return tx.order.update({
+        where: { id },
+        data: { status: dto.status },
+        include: ITEMS_INCLUDE,
+      });
+    });
+  }
+
+  // Transición no destructiva: update simple fuera de transacción
+  return this.prisma.order.update({
+    where: { id },
+    data: { status: dto.status },
+    include: ITEMS_INCLUDE,
   });
 }
 ```
@@ -1955,6 +2120,11 @@ async findOne(id: number, requestingUser: { id: number; role: string }) {
 | 3 | Parámetros de enum en query (`status`, `paymentMethod`) llegan como `string` al controller | Prisma acepta el string directamente para enums — no es necesario convertirlos. |
 | 4 | Fechas de filtro (`startDate`, `endDate`) deben convertirse con `new Date(string)` | Prisma no acepta strings de fecha ISO para comparaciones `gte`/`lte` — necesita objetos `Date`. |
 | 5 | La verificación de pertenencia de la orden debe estar en el servicio, no en el guard | El guard no tiene acceso al `order.userId` — esa lógica requiere leer la orden de la DB. |
+| 6 | `FOR UPDATE` y validación de stock van DENTRO del callback de `$transaction` | Leer el producto con `this.prisma` fuera y luego usar `tx` adentro deja una ventana de tiempo entre la lectura y el lock donde otro request puede modificar el stock. |
+| 7 | `decrement` va DESPUÉS de `order.create`, en un segundo loop dentro de la misma `$transaction` | Si el `decrement` fuera antes de `create` y `create` falla, el stock ya se descontó pero la orden no existe. El rollback de la transacción revierte ambos. |
+| 8 | Agrupación con `Map` toma el `discountPercent` máximo para items duplicados | Es una decisión de negocio: beneficiar al cliente con el mayor descuento declarado. Documentar si la regla cambia. |
+| 9 | Cancelación usa `tx.orderItem.findMany` dentro de la `$transaction` | No se puede confiar en `order.items` del `findUnique` inicial porque ese query fue fuera de la transacción — los items podrían haber cambiado (aunque es poco probable, mantener todo dentro del scope transaccional es correcto). |
+| 10 | Transiciones no-destructivas (sin side effects) van fuera de `$transaction` | `$transaction` tiene overhead. Solo se justifica cuando hay múltiples escrituras que deben ser atómicas. Un simple cambio `CONFIRMED → SHIPPED` no necesita transacción. |
 
 **Anti-patrones.**
 
@@ -2000,6 +2170,294 @@ Dentro del $transaction, usar SOLO tx — nunca this.prisma.
 - [ ] `GET /orders/:id` verifica pertenencia cuando `req.user.role !== 'ADMIN'`
 - [ ] Migraciones con columnas NOT NULL usaron el flujo manual (`db execute` + `migrate resolve`)
 - [ ] `startDate`/`endDate` se convierten con `new Date()` antes de pasarlos a Prisma
+- [ ] Items agrupados por `productId` con `Map` ANTES de entrar a `$transaction`
+- [ ] `$queryRaw FOR UPDATE` dentro del callback, ANTES de validar stock
+- [ ] `decrement` de stock en un segundo loop DESPUÉS de `order.create`, dentro de la misma `$transaction`
+- [ ] `updateStatus` valida la transición contra `VALID_TRANSITIONS` antes de hacer cualquier update
+- [ ] Cancelación hace `increment` de stock y update de estado en la misma `$transaction`
+- [ ] Transiciones sin side effects usan `this.prisma.order.update` directo (sin `$transaction`)
+
+---
+
+### 6.19 Máquina de estados de Order
+
+**Concepto.** Sin una máquina de estados explícita, cualquier transición entre estados es válida — una orden `DELIVERED` podría volver a `PENDING`, o una `CANCELLED` podría pasar a `SHIPPED`. Esto genera inconsistencias de negocio y side effects mal aplicados (stock devuelto en transiciones que no son cancelación, o stock no devuelto cuando sí corresponde).
+
+La solución es una constante `VALID_TRANSITIONS` tipada como `Record<OrderStatus, OrderStatus[]>` en la clase del servicio. Al ser `Record` (no `Partial`), TypeScript garantiza que todos los estados del enum están declarados — un estado faltante es error de compilación. `updateStatus` consulta esta lista antes de actuar: si la transición no está permitida, lanza `400` inmediatamente sin tocar la DB.
+
+La separación de casos por tipo de transición es clave para la eficiencia: transiciones con side effects (→ `CANCELLED`) requieren devolver stock y cambiar el estado de forma atómica — usan `$transaction`. Transiciones limpias (→ `SHIPPED`, → `DELIVERED`) son un simple `UPDATE` — usan `this.prisma.order.update` directo. Evita overhead transaccional innecesario en el camino común.
+
+**Patrón base.**
+
+```typescript
+private readonly VALID_TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
+  [OrderStatus.PENDING]:   [OrderStatus.CONFIRMED, OrderStatus.CANCELLED],
+  [OrderStatus.CONFIRMED]: [OrderStatus.SHIPPED,   OrderStatus.CANCELLED],
+  [OrderStatus.SHIPPED]:   [OrderStatus.DELIVERED],
+  [OrderStatus.DELIVERED]: [],
+  [OrderStatus.CANCELLED]: [],
+};
+
+async updateStatus(id: number, dto: UpdateStatusDto) {
+  const order = await this.prisma.order.findUnique({ where: { id } });
+  if (!order)
+    throw new NotFoundException(`Pedido con id ${id} no encontrado`);
+
+  const validNext = this.VALID_TRANSITIONS[order.status];
+  if (!validNext.includes(dto.status))
+    throw new BadRequestException(
+      `No se puede cambiar el estado de ${order.status} a ${dto.status}`,
+    );
+
+  // Cancelación: devolver stock en la misma transacción que el cambio de estado
+  if (dto.status === OrderStatus.CANCELLED) {
+    return this.prisma.$transaction(async (tx) => {
+      const items = await tx.orderItem.findMany({ where: { orderId: id } });
+      for (const item of items) {
+        await tx.product.update({
+          where: { id: item.productId },
+          data: { stock: { increment: item.quantity } },
+        });
+      }
+      return tx.order.update({
+        where: { id },
+        data: { status: dto.status },
+        include: ITEMS_INCLUDE,
+      });
+    });
+  }
+
+  // Transición no destructiva: update simple fuera de transacción
+  return this.prisma.order.update({
+    where: { id },
+    data: { status: dto.status },
+    include: ITEMS_INCLUDE,
+  });
+}
+```
+
+**Variantes / casos comunes — Diagrama de estados.**
+
+| Estado actual | Transiciones válidas     | ¿Estado terminal? |
+|---------------|--------------------------|-------------------|
+| PENDING       | CONFIRMED, CANCELLED     | No                |
+| CONFIRMED     | SHIPPED, CANCELLED       | No                |
+| SHIPPED       | DELIVERED                | No                |
+| DELIVERED     | —                        | ✅ Sí             |
+| CANCELLED     | —                        | ✅ Sí             |
+
+Nota: `PROCESSING` no existe en este schema. `CONFIRMED → SHIPPED` modela el flujo simplificado de esta versión del sistema.
+
+**Gotchas.**
+
+| # | Gotcha | Por qué importa |
+|---|--------|-----------------|
+| 1 | `VALID_TRANSITIONS` como `Record<OrderStatus, OrderStatus[]>` (no `Partial`) garantiza que todos los estados están cubiertos | Con `Partial`, un estado no declarado retorna `undefined` y `undefined.includes(...)` lanza TypeError en runtime. |
+| 2 | Side effects (devolución de stock) van en la misma `$transaction` que el cambio de estado | Si el `increment` de stock tiene éxito pero el `order.update` falla, el inventario queda inconsistente. La transacción garantiza que ambas operaciones son atómicas. |
+| 3 | `DELIVERED` y `CANCELLED` son estados terminales — `VALID_TRANSITIONS[estado]` retorna `[]` | Cualquier intento de mover una orden desde estos estados lanza 400 automáticamente sin lógica adicional. |
+
+**Anti-patrones.**
+
+- ❌ Validar la transición en el DTO o controller en lugar del servicio — el DTO no tiene acceso al estado actual de la orden
+- ❌ Devolver el stock en una llamada separada después del `order.update` — no es atómico; un fallo a mitad deja el inventario inconsistente
+- ❌ Usar strings literales (`'CANCELLED'`) en lugar del enum `OrderStatus.CANCELLED` — rompe si el nombre del estado cambia
+
+**Prompt reutilizable.**
+
+```
+En src/orders/orders.service.ts modifica VALID_TRANSITIONS para agregar
+el estado [NUEVO_ESTADO] con las transiciones permitidas desde y hacia él.
+Si la transición hacia [NUEVO_ESTADO] requiere side effects, agrégalos dentro
+de la rama correspondiente en updateStatus, usando $transaction si hay
+múltiples escrituras.
+Actualiza también el schema de Prisma si el nuevo estado no existe en el enum
+OrderStatus, y corre la migración correspondiente.
+```
+
+**Code review específico.**
+
+- [ ] `VALID_TRANSITIONS` es `Record<OrderStatus, OrderStatus[]>` (no `Partial`) — todos los estados cubiertos
+- [ ] Estados terminales (`DELIVERED`, `CANCELLED`) tienen `[]` en sus transiciones
+- [ ] Side effects de cancelación (stock) están en la misma `$transaction` que el `order.update`
+- [ ] Transiciones sin side effects usan `this.prisma.order.update` directo (sin `$transaction`)
+- [ ] Se usa el enum `OrderStatus` — sin strings literales de estado
+
+---
+
+### 6.20 Response DTOs
+
+**Concepto.** Sin Response DTOs, los endpoints devuelven directamente las entidades de Prisma. Esto genera tres problemas: (1) **seguridad** — campos sensibles como `password` quedan expuestos si se olvida el `select`; (2) **acoplamiento** — el schema de la API queda ligado al schema de la DB, cualquier cambio en Prisma rompe el contrato de la API sin advertencia; (3) **documentación** — Swagger no puede inferir el shape exacto de la respuesta desde una entidad Prisma.
+
+La solución es una clase DTO por módulo con constructor explícito. El constructor recibe la entidad Prisma y asigna solo los campos permitidos. La transformación ocurre en el controller, no en el servicio — el servicio sigue devolviendo la entidad completa para que otros servicios puedan usarla sin restricciones.
+
+Para entidades anidadas (e.g. un `Product` dentro de `Category`) se usa un `BasicDto` con solo los campos esenciales. Esto evita referencias circulares y mantiene las respuestas lean. La constante `USER_PUBLIC_SELECT` (con `as const`) aprovecha la inferencia de tipos de Prisma: el tipo de retorno del `select` se infiere automáticamente del literal del objeto, sin necesidad de tiparlo a mano.
+
+**Patrón base — Constante de select.**
+
+```typescript
+// src/users/users.constants.ts
+export const USER_PUBLIC_SELECT = {
+  id: true,
+  email: true,
+  role: true,
+  isActive: true,
+  createdAt: true,
+  updatedAt: true,
+} as const;
+```
+
+**Patrón base — DTO de respuesta.**
+
+```typescript
+// src/users/dto/user-response.dto.ts
+import { ApiProperty } from '@nestjs/swagger';
+import type { Role } from '../../../generated/prisma/enums';
+
+type UserPublic = {
+  id: number;
+  email: string;
+  role: Role;
+  isActive: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
+export class UserResponseDto {
+  @ApiProperty({ example: 1 })
+  id: number;
+
+  @ApiProperty({ example: 'user@ecommerce.com' })
+  email: string;
+
+  @ApiProperty({ example: 'USER', enum: ['ADMIN', 'USER', 'GUEST'] })
+  role: Role;
+
+  @ApiProperty({ example: true })
+  isActive: boolean;
+
+  @ApiProperty()
+  createdAt: Date;
+
+  @ApiProperty()
+  updatedAt: Date;
+
+  constructor(user: UserPublic) {
+    this.id = user.id;
+    this.email = user.email;
+    this.role = user.role;
+    this.isActive = user.isActive;
+    this.createdAt = user.createdAt;
+    this.updatedAt = user.updatedAt;
+  }
+}
+```
+
+**Patrón base — Transformación en controller.**
+
+```typescript
+// Singular
+async findOne(@Param('id', ParseIntPipe) id: number) {
+  const user = await this.usersService.findOneOrFail(id);
+  return new UserResponseDto(user);
+}
+
+// Lista paginada — preservar el envelope, mapear solo data
+async findAll(...) {
+  const result = await this.usersService.findAll(page, limit);
+  return {
+    ...result,
+    data: result.data.map((u) => new UserResponseDto(u)),
+  };
+}
+```
+
+**Patrón base — BasicDto para entidades anidadas.**
+
+```typescript
+// src/categories/dto/category-basic.dto.ts
+type CategoryBasic = { id: number; name: string };
+
+export class CategoryBasicDto {
+  @ApiProperty({ example: 1 })   id: number;
+  @ApiProperty({ example: 'Electrónica' }) name: string;
+
+  constructor(category: CategoryBasic) {
+    this.id = category.id;
+    this.name = category.name;
+  }
+}
+
+// src/products/dto/product-response.dto.ts — referencia al BasicDto
+export class ProductResponseDto {
+  // ...
+  @ApiProperty({ type: () => CategoryBasicDto })  // lazy reference
+  category: CategoryBasicDto;
+
+  constructor(product: ProductWithCategory) {
+    // ...
+    this.category = new CategoryBasicDto(product.category);
+  }
+}
+```
+
+**Variantes / casos comunes.**
+
+| Caso | Patrón |
+|------|--------|
+| Campo simple omitido | No incluirlo en el constructor — no aparece en la respuesta |
+| Entidad anidada singular | `this.field = new BasicDto(entity.field)` |
+| Array de entidades anidadas | `this.items = entity.items.map(i => new BasicDto(i))` |
+| Constante de select reutilizable | `as const` en el objeto — Prisma infiere el tipo de retorno |
+| Módulos sin `select` (write ops) | Agregar `include: { relation: true }` al servicio para que el DTO pueda construirse |
+
+**Gotchas.**
+
+| # | Gotcha | Por qué importa |
+|---|--------|-----------------|
+| 1 | Los métodos de escritura (`create`, `replace`, `patch`) no incluyen relaciones por defecto | Si el DTO espera `product.category` pero el servicio no hace `include: { category: true }`, el constructor falla en runtime con `Cannot read properties of undefined`. Siempre agregar el `include` cuando el DTO lo necesita. |
+| 2 | `@ApiProperty({ type: () => CategoryBasicDto })` requiere la función lazy (`() =>`) para DTOs anidados | Sin la función, Swagger no puede resolver la referencia si el DTO se importa en orden circular. Con `() =>` la resolución es lazy y el problema desaparece. |
+| 3 | Arrays de DTOs anidados requieren `isArray: true` en `@ApiProperty` | Sin `isArray: true`, Swagger documenta el campo como objeto singular aunque en runtime sea un array. El schema generado queda incorrecto para los clientes que lo consuman. |
+
+**Anti-patrones.**
+
+- ❌ Devolver la entidad Prisma directamente desde el controller — expone campos internos y acopla la API al schema de la DB
+- ❌ Manejar la omisión de campos con `delete entity.password` — mutable, frágil, y falla en modo estricto de TypeScript
+- ❌ Repetir el objeto `select` inline en cada query en lugar de usar una constante — cuando el shape cambia hay que actualizarlo en N lugares
+- ❌ Hacer la transformación en el servicio — el servicio debe devolver la entidad completa para que otros servicios (e.g. `AuthService`) puedan usarla sin restricciones
+- ❌ Usar `class-transformer` con `@Exclude()` en la entidad — agrega complejidad de configuración y no funciona sin `ClassSerializerInterceptor` global
+
+**Prompt reutilizable.**
+
+```
+Implementa Response DTOs para el módulo [nombre] en src/[nombre]/.
+
+1. Si el módulo usa select repetido, crea src/[nombre]/[nombre].constants.ts con
+   [NOMBRE]_PUBLIC_SELECT como const.
+
+2. Crea src/[nombre]/dto/[nombre]-response.dto.ts con:
+   - Tipo local que describe el shape de entrada (lo que devuelve Prisma)
+   - Clase [Nombre]ResponseDto con @ApiProperty en cada campo
+   - Constructor que asigna solo los campos del DTO
+
+3. Si el módulo devuelve entidades anidadas, crea src/[entidad]/dto/[entidad]-basic.dto.ts
+   con solo los campos esenciales.
+
+4. Modifica [nombre].controller.ts:
+   - Singular: const entity = await service.method(); return new Dto(entity);
+   - Lista paginada: return { ...result, data: result.data.map(e => new Dto(e)) };
+
+5. Si algún método de escritura (create/replace/patch) necesita relaciones para
+   construir el DTO, agrega include: { relation: true } en ese método del servicio.
+```
+
+**Code review específico.**
+
+- [ ] El controller transforma TODAS las respuestas con el DTO — ningún método retorna la entidad Prisma directa
+- [ ] El tipo local en el DTO describe exactamente el shape que devuelve Prisma (compilación lo verifica)
+- [ ] Métodos de escritura del servicio incluyen las relaciones necesarias para el DTO
+- [ ] `@ApiProperty({ type: () => BasicDto })` en campos anidados — función lazy, no referencia directa
+- [ ] Arrays de DTOs usan `isArray: true` en `@ApiProperty`
+- [ ] La constante de select usa `as const` para que Prisma infiera el tipo de retorno
 
 ---
 
@@ -2014,6 +2472,47 @@ Esta sección documenta bugs raros encontrados en producción o desarrollo, con 
 **Problema.** Sin lock pesimista, ambas requests leen `stock = 1`, ambas validan que hay suficiente, ambas crean su pedido, y ambas escriben `stock = 0`. Resultado: dos pedidos vendidos, una sola unidad real → faltante invisible.
 
 **Solución.** Dentro del `prisma.$transaction`, leer cada producto con `tx.$queryRaw<Product[]>\`SELECT * FROM "Product" WHERE id = ${id} FOR UPDATE\`` antes de validar stock. PostgreSQL bloquea la fila hasta que la transacción termine; el segundo request espera, lee el stock actualizado, y falla la validación limpiamente.
+
+**Solución aplicada.**
+
+```typescript
+// Dentro del callback de $transaction, ANTES de validar stock:
+const rows = await tx.$queryRaw<Product[]>`
+  SELECT * FROM "Product" WHERE id = ${item.productId} FOR UPDATE
+`;
+const product = rows[0];
+// Validaciones DESPUÉS del lock:
+if (!product) throw new NotFoundException(...);
+if (product.stock < item.quantity) throw new BadRequestException(...);
+```
+
+PostgreSQL bloquea la fila del producto al leer con `FOR UPDATE`. El segundo request concurrente espera en esa línea hasta que la primera transacción haga commit. Al continuar, lee el stock ya decrementado y falla la validación correctamente con 400, sin crear una orden inválida.
+
+**Capítulo relacionado:** 6.18 (Módulo de Órdenes), 6.19 (Máquina de estados)
+
+---
+
+### 7.2 Productos duplicados en el mismo pedido
+
+**Contexto.** El cliente envía el mismo `productId` dos veces en el array `items` de `POST /orders`.
+
+**Problema.** Sin agrupación previa el servicio entra al loop con dos entradas para el mismo producto: aplica `FOR UPDATE` dos veces sobre la misma fila en la misma transacción (comportamiento indefinido según el motor de DB), valida el stock dos veces de forma independiente (puede aprobar dos pedidos de 5 unidades con stock = 7), y crea dos `OrderItem` separados para el mismo producto en lugar de uno consolidado.
+
+**Solución.** Agrupar `dto.items` por `productId` con `Map` antes de entrar a la `$transaction`. Las quantities suman; el `discountPercent` toma el máximo (decisión de negocio: beneficiar al cliente con el mayor descuento declarado).
+
+**Capítulo relacionado.** 6.18 (Módulo de Órdenes)
+
+---
+
+### 7.3 Float para valores monetarios
+
+**Contexto.** El schema de Prisma usa `Float` para `totalAmount`, `taxAmount`, `shippingCost`, `grandTotal`, `price`, `discountAmount`, `finalPrice`, `subtotal`.
+
+**Problema.** `Float` (IEEE 754 double-precision) tiene errores de representación binaria. Ejemplo: `0.1 + 0.2 = 0.30000000000000004` en JavaScript. En cálculos aislados el error es despreciable, pero al sumar miles de transacciones los errores se acumulan y los totales de facturación pueden quedar incorrectos.
+
+**Estado actual.** `Float` está en uso — no se migra ahora para evitar breaking changes en producción. Es deuda técnica documentada conscientemente.
+
+**Recomendación.** Migrar a `Decimal` en el schema de Prisma antes de procesar volumen real de transacciones. Prisma usa `Decimal.js` para el tipo `Decimal`, que garantiza precisión arbitraria. Requiere migración SQL manual (ver capítulo 6.18, flujo de migración con datos existentes).
 
 **Capítulo relacionado.** 6.18 (Módulo de Órdenes)
 
@@ -2081,6 +2580,8 @@ taskkill /PID <numero> /F
 
 | Versión | Fecha | Cambios |
 |---------|-------|---------|
+| `2.3.0` | 2026-04-14 | **MINOR** — Nuevo capítulo 6.20: Response DTOs (patrón de transformación en controllers, constantes de select con `as const`, BasicDto para entidades anidadas, Swagger con lazy reference). CLAUDE.md: nueva sección "Response DTOs" documentando el patrón implementado. |
+| `2.2.0` | 2026-04-13 | **MINOR** — Capítulos 6.14, 6.17 y 6.18 reemplazados con código real del proyecto (no reconstruido de memoria). Sección 4: flujo "siempre vía Claude Code" + nueva regla de leer archivos fuente. Nuevo capítulo 6.19: Máquina de estados de Order. Sección 7 expandida: 7.1 con fix documentado, 7.2 productos duplicados, 7.3 Float en dinero. Headings de sección 6 sin ⭐ (anchors de GitHub corregidos). Code fix: `http-exception.filter.ts` — mensaje 500 traducido al español. |
 | `2.1.0` | 2026-04-13 | **MINOR** — Migrados todos los capítulos pendientes al formato v2 estándar (6.1, 6.2, 6.3, 6.5–6.11, 6.13–6.18). Cada capítulo ahora incluye Concepto, Patrón base, Gotchas con 3 columnas, Anti-patrones, Prompt reutilizable y Code review específico. |
 | `2.0.0` | 2026-04-13 | **MAJOR** — Reestructura completa del playbook al formato v2: agregadas secciones de Reglas innegociables, Convenciones, Code review checklist, Reglas de actualización, Casos edge conocidos, Changelog. Capítulos 6.4 (Prisma 7 base) y 6.12 (JWT) migrados al formato estándar v2 como referencia. Resto de capítulos pendientes de migración. |
 | `1.0.0` | (anterior) | Versión inicial (heredada del PLAYBOOK.md previo). |
