@@ -1,4 +1,10 @@
-import { ExceptionFilter, Catch, ArgumentsHost, HttpException, HttpStatus } from '@nestjs/common';
+import {
+  ExceptionFilter,
+  Catch,
+  ArgumentsHost,
+  HttpException,
+  HttpStatus,
+} from '@nestjs/common';
 import type { Request, Response } from 'express';
 
 @Catch()
@@ -16,7 +22,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
     const { message, errors } =
       exception instanceof HttpException
         ? this.resolveResponse(exception)
-        : { message: 'Internal server error', errors: undefined };
+        : { message: 'Error interno del servidor', errors: undefined };
 
     response.status(statusCode).json({
       statusCode,
@@ -27,12 +33,16 @@ export class HttpExceptionFilter implements ExceptionFilter {
     });
   }
 
-  private resolveResponse(exception: HttpException): { message: string; errors?: string[] } {
+  private resolveResponse(exception: HttpException): {
+    message: string;
+    errors?: string[];
+  } {
     const response = exception.getResponse();
     if (typeof response === 'string') return { message: response };
     if (typeof response === 'object' && 'message' in response) {
       const msg = (response as Record<string, unknown>).message;
-      if (Array.isArray(msg)) return { message: 'Error de validación', errors: msg };
+      if (Array.isArray(msg))
+        return { message: 'Error de validación', errors: msg };
       return { message: String(msg) };
     }
     return { message: exception.message };

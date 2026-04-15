@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import type { Role } from '../../generated/prisma/enums';
+import { USER_PUBLIC_SELECT } from './users.constants';
 
 export interface CreateUserData {
   email: string;
@@ -30,19 +31,26 @@ export class UsersService {
       this.prisma.user.findMany({
         skip,
         take: limit,
-        select: { id: true, email: true, role: true, isActive: true, createdAt: true, updatedAt: true },
+        select: USER_PUBLIC_SELECT,
       }),
       this.prisma.user.count(),
     ]);
-    return { data: users, total, page, limit, totalPages: Math.ceil(total / limit) };
+    return {
+      data: users,
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+    };
   }
 
   async findOneOrFail(id: number) {
     const user = await this.prisma.user.findUnique({
       where: { id },
-      select: { id: true, email: true, role: true, isActive: true, createdAt: true, updatedAt: true },
+      select: USER_PUBLIC_SELECT,
     });
-    if (!user) throw new NotFoundException(`Usuario con id ${id} no encontrado`);
+    if (!user)
+      throw new NotFoundException(`Usuario con id ${id} no encontrado`);
     return user;
   }
 
@@ -51,7 +59,7 @@ export class UsersService {
     return this.prisma.user.update({
       where: { id },
       data: { role },
-      select: { id: true, email: true, role: true, isActive: true, createdAt: true, updatedAt: true },
+      select: USER_PUBLIC_SELECT,
     });
   }
 
@@ -60,7 +68,7 @@ export class UsersService {
     return this.prisma.user.update({
       where: { id },
       data: { isActive },
-      select: { id: true, email: true, role: true, isActive: true, createdAt: true, updatedAt: true },
+      select: USER_PUBLIC_SELECT,
     });
   }
 

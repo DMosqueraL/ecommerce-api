@@ -1,7 +1,19 @@
-import { Controller, Get, Post, Put, Delete, Param, Body, ParseIntPipe, HttpCode, Query } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Put,
+  Delete,
+  Param,
+  Body,
+  ParseIntPipe,
+  HttpCode,
+  Query,
+} from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { CategoriesService } from './categories.service';
 import { CreateCategoryDto } from './dto/create-category.dto';
+import { CategoryResponseDto } from './dto/category-response.dto';
 import { Public } from '../common/decorators/public.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
 
@@ -16,19 +28,25 @@ export class CategoriesController {
     @Query('page', new ParseIntPipe({ optional: true })) page?: number,
     @Query('limit', new ParseIntPipe({ optional: true })) limit?: number,
   ) {
-    return this.categoriesService.findAll(page, limit);
+    const result = await this.categoriesService.findAll(page, limit);
+    return {
+      ...result,
+      data: result.data.map((c) => new CategoryResponseDto(c)),
+    };
   }
 
   @Public()
   @Get(':id')
   async findOne(@Param('id', ParseIntPipe) id: number) {
-    return this.categoriesService.findOne(id);
+    const category = await this.categoriesService.findOne(id);
+    return new CategoryResponseDto(category);
   }
 
   @Roles('ADMIN')
   @Post()
   async create(@Body() body: CreateCategoryDto) {
-    return this.categoriesService.create(body);
+    const category = await this.categoriesService.create(body);
+    return new CategoryResponseDto(category);
   }
 
   @Roles('ADMIN')
@@ -37,7 +55,8 @@ export class CategoriesController {
     @Param('id', ParseIntPipe) id: number,
     @Body() body: CreateCategoryDto,
   ) {
-    return this.categoriesService.replace(id, body);
+    const category = await this.categoriesService.replace(id, body);
+    return new CategoryResponseDto(category);
   }
 
   @Roles('ADMIN')
