@@ -16,7 +16,10 @@ import { envValidationSchema } from './config/env.validation';
 
 @Module({
   imports: [
-    ConfigModule.forRoot({ isGlobal: true, validationSchema: envValidationSchema }),
+    ConfigModule.forRoot({
+      isGlobal: true,
+      validationSchema: envValidationSchema,
+    }),
     PrismaModule,
     ProductsModule,
     CategoriesModule,

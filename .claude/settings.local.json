@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__plugin_claude-mem_mcp-search__smart_outline",
+      "mcp__plugin_claude-mem_mcp-search__get_observations",
+      "Bash(npm run *)",
+      "Bash(grep -n \"Variantes / casos comunes\\\\|Gotchas\\\\.\\\\|Anti-patrones\\\\.\\\\|Prompt reutilizable\\\\.\\\\|Code review específico\\\\.\\\\|Modules implemented\\\\|---$\" \"C:/Users/DorisML/Documents/CursoNestJS/ecommerce-api/PLAYBOOK.md\")"
+    ]
+  }
+}

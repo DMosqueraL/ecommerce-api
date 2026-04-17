@@ -3,8 +3,8 @@
 > **Proyecto:** ecommerce-api
 > **Stack:** NestJS · Prisma 7 · PostgreSQL · TypeScript · JWT
 > **Propósito:** referencia técnica y prompts reutilizables para desarrollo asistido por Claude Code.
-> **Versión:** `2.3.0`
-> **Última actualización:** 2026-04-14
+> **Versión:** `2.4.0`
+> **Última actualización:** 2026-04-16
 > **Mantenido por:** Doris Mosquera
 
 ---
@@ -37,6 +37,10 @@
    - 6.18 [Módulo de Órdenes](#618-módulo-de-órdenes) ⭐
    - 6.19 [Máquina de estados de Order](#619-máquina-de-estados-de-order) ⭐
    - 6.20 [Response DTOs](#620-response-dtos) ⭐
+   - 6.21 Carrito de compras *(roadmap)*
+   - 6.22 Frontend para pruebas *(roadmap)*
+   - 6.23 Testing backend (Jest + Supertest) *(roadmap)*
+   - 6.24 Testing frontend *(roadmap)*
 7. [Casos edge conocidos](#7-casos-edge-conocidos)
 8. [Tarjetas de estudio](#8-tarjetas-de-estudio)
 9. [Comandos útiles (Windows)](#9-comandos-útiles-windows)
@@ -2288,7 +2292,7 @@ OrderStatus, y corre la migración correspondiente.
 
 **Concepto.** Sin Response DTOs, los endpoints devuelven directamente las entidades de Prisma. Esto genera tres problemas: (1) **seguridad** — campos sensibles como `password` quedan expuestos si se olvida el `select`; (2) **acoplamiento** — el schema de la API queda ligado al schema de la DB, cualquier cambio en Prisma rompe el contrato de la API sin advertencia; (3) **documentación** — Swagger no puede inferir el shape exacto de la respuesta desde una entidad Prisma.
 
-La solución es una clase DTO por módulo con constructor explícito. El constructor recibe la entidad Prisma y asigna solo los campos permitidos. La transformación ocurre en el controller, no en el servicio — el servicio sigue devolviendo la entidad completa para que otros servicios puedan usarla sin restricciones.
+La solución es una clase DTO por módulo con constructor explícito. El constructor recibe la entidad Prisma y asigna solo los campos permitidos. La transformación puede ocurrir en el controller o en el servicio, dependiendo de si el servicio tiene callers internos: si otro servicio lo inyecta y necesita la entidad completa (e.g. `UsersService` devuelve el `User` con `password` para que `AuthService.login` pueda verificarlo), la transformación va en el controller; si el servicio es consumido solo por su propio controller, la transformación puede ir directamente en el servicio.
 
 Para entidades anidadas (e.g. un `Product` dentro de `Category`) se usa un `BasicDto` con solo los campos esenciales. Esto evita referencias circulares y mantiene las respuestas lean. La constante `USER_PUBLIC_SELECT` (con `as const`) aprovecha la inferencia de tipos de Prisma: el tipo de retorno del `select` se infiere automáticamente del literal del objeto, sin necesidad de tiparlo a mano.
 
@@ -2409,6 +2413,130 @@ export class ProductResponseDto {
 | Array de entidades anidadas | `this.items = entity.items.map(i => new BasicDto(i))` |
 | Constante de select reutilizable | `as const` en el objeto — Prisma infiere el tipo de retorno |
 | Módulos sin `select` (write ops) | Agregar `include: { relation: true }` al servicio para que el DTO pueda construirse |
+| Transformación en servicio | Válida cuando el servicio no tiene callers internos (Auth, Profile, Orders). Ver variante abajo. |
+
+**Variante: transformación en servicio (módulos sin callers internos).**
+
+Cuando un servicio es consumido **únicamente por su propio controller**, la transformación puede hacerse dentro del servicio — el controller simplemente retorna lo que recibe. Se aplica a: `AuthService`, `ProfileService`, `OrdersService`. No aplica a `UsersService` porque `AuthService` lo inyecta y necesita el `User` completo (con `password`) para verificar credenciales en login.
+
+```typescript
+// src/auth/dto/register-response.dto.ts  — expone id, email, role, isActive, createdAt, updatedAt
+// password nunca llega al constructor: RegisterResponseDto no declara ese campo
+type RegisteredUser = {
+  id: number; email: string; role: Role;
+  isActive: boolean; createdAt: Date; updatedAt: Date;
+};
+
+export class RegisterResponseDto {
+  @ApiProperty({ example: 1 })           id: number;
+  @ApiProperty({ example: 'user@ecommerce.com' }) email: string;
+  @ApiProperty({ example: 'USER', enum: ['ADMIN', 'USER', 'GUEST'] }) role: Role;
+  @ApiProperty({ example: true })        isActive: boolean;
+  @ApiProperty()                         createdAt: Date;
+  @ApiProperty()                         updatedAt: Date;
+
+  constructor(user: RegisteredUser) {
+    this.id = user.id; this.email = user.email; this.role = user.role;
+    this.isActive = user.isActive; this.createdAt = user.createdAt; this.updatedAt = user.updatedAt;
+  }
+}
+```
+
+```typescript
+// src/profile/dto/profile-response.dto.ts  — todos los campos opcionales son string | null
+type ProfileData = {
+  id: number; phone: string | null; address: string | null;
+  docType: string | null; docNumber: string | null; userId: number;
+};
+
+export class ProfileResponseDto {
+  @ApiProperty({ example: 1 })                             id: number;
+  @ApiProperty({ example: '+57 300 123 4567', nullable: true }) phone: string | null;
+  @ApiProperty({ example: 'Calle 123 # 45-67', nullable: true }) address: string | null;
+  @ApiProperty({ example: 'CC', nullable: true })          docType: string | null;
+  @ApiProperty({ example: '1234567890', nullable: true })  docNumber: string | null;
+  @ApiProperty({ example: 1 })                             userId: number;
+
+  constructor(profile: ProfileData) {
+    this.id = profile.id; this.phone = profile.phone; this.address = profile.address;
+    this.docType = profile.docType; this.docNumber = profile.docNumber; this.userId = profile.userId;
+  }
+}
+```
+
+Para la orden, el ítem anidado usa `OrderItemResponseDto` (no `BasicDto` — no hay riesgo de circularidad). `productName` se obtiene de `item.product.name`, disponible porque `ITEMS_INCLUDE = { items: { include: { product: true } } }`:
+
+```typescript
+// src/orders/dto/order-item-response.dto.ts
+type OrderItemWithProduct = {
+  id: number; productId: number; product: { name: string };
+  quantity: number; price: number; discountPercent: number;
+  discountAmount: number; finalPrice: number; subtotal: number;
+};
+
+export class OrderItemResponseDto {
+  @ApiProperty({ example: 1 })               id: number;
+  @ApiProperty({ example: 5 })               productId: number;
+  @ApiProperty({ example: 'Laptop Lenovo' }) productName: string;
+  @ApiProperty({ example: 2 })               quantity: number;
+  @ApiProperty({ example: 1500000 })         price: number;
+  @ApiProperty({ example: 0 })               discountPercent: number;
+  @ApiProperty({ example: 0 })               discountAmount: number;
+  @ApiProperty({ example: 1500000 })         finalPrice: number;
+  @ApiProperty({ example: 3000000 })         subtotal: number;
+
+  constructor(item: OrderItemWithProduct) {
+    this.id = item.id; this.productId = item.productId;
+    this.productName = item.product.name;  // ← accede a la relación incluida vía ITEMS_INCLUDE
+    this.quantity = item.quantity; this.price = item.price;
+    this.discountPercent = item.discountPercent; this.discountAmount = item.discountAmount;
+    this.finalPrice = item.finalPrice; this.subtotal = item.subtotal;
+  }
+}
+```
+
+`OrderResponseDto` anida el array y lo mapea en el constructor. `OrdersService` devuelve `new OrderResponseDto(order)` en todos sus métodos; la transformación paginada también ocurre en el servicio:
+
+```typescript
+// src/orders/dto/order-response.dto.ts
+export class OrderResponseDto {
+  // id, status, totalAmount, shippingCost, taxAmount, grandTotal,
+  // shippingAddress, billingAddress, paymentMethod, shippingCompany,
+  // trackingNumber, carrierPhone, createdAt, updatedAt
+  @ApiProperty({ type: () => OrderItemResponseDto, isArray: true })
+  items: OrderItemResponseDto[];
+
+  constructor(order: OrderWithItems) {
+    this.id = order.id; // ... resto de campos ...
+    this.items = order.items.map((item) => new OrderItemResponseDto(item));
+  }
+}
+
+// En OrdersService.findAll / findMine:
+return {
+  data: data.map((o) => new OrderResponseDto(o)),
+  total, page, limit, totalPages: Math.ceil(total / limit),
+};
+```
+
+**Decisión de diseño: Profile obligatorio vacío en el registro.**
+
+Todo usuario tiene `Profile` desde el momento del registro. `UsersService.createWithProfile` usa `$transaction` para crear `User` + `Profile` vacío de forma atómica. Si la creación del perfil falla, el usuario tampoco se persiste — no puede quedar un `User` sin su `Profile`.
+
+```typescript
+// src/users/users.service.ts
+async createWithProfile(data: CreateUserData) {
+  return this.prisma.$transaction(async (tx) => {
+    const user = await tx.user.create({ data });
+    await tx.profile.create({
+      data: { userId: user.id, phone: null, address: null, docType: null, docNumber: null },
+    });
+    return user;
+  });
+}
+```
+
+`AuthService.register` llama `createWithProfile` en lugar del antiguo `create`. El destructuring manual `const { password: _, ...result } = user` queda reemplazado por `return new RegisterResponseDto(user)`. El endpoint `POST /profile/me` fue eliminado — el perfil ya existe vacío desde el registro; solo `PATCH /profile/me` queda para que el usuario lo rellene.
 
 **Gotchas.**
 
@@ -2417,13 +2545,14 @@ export class ProductResponseDto {
 | 1 | Los métodos de escritura (`create`, `replace`, `patch`) no incluyen relaciones por defecto | Si el DTO espera `product.category` pero el servicio no hace `include: { category: true }`, el constructor falla en runtime con `Cannot read properties of undefined`. Siempre agregar el `include` cuando el DTO lo necesita. |
 | 2 | `@ApiProperty({ type: () => CategoryBasicDto })` requiere la función lazy (`() =>`) para DTOs anidados | Sin la función, Swagger no puede resolver la referencia si el DTO se importa en orden circular. Con `() =>` la resolución es lazy y el problema desaparece. |
 | 3 | Arrays de DTOs anidados requieren `isArray: true` en `@ApiProperty` | Sin `isArray: true`, Swagger documenta el campo como objeto singular aunque en runtime sea un array. El schema generado queda incorrecto para los clientes que lo consuman. |
+| 4 | Transformación en servicio válida solo si el servicio no tiene callers internos | Si otro servicio inyecta el servicio y necesita la entidad completa (e.g. `AuthService` necesita `user.password` de `UsersService`), poner la transformación en el propio servicio rompe al caller. Verificar siempre quién consume el servicio antes de decidir dónde transformar. |
 
 **Anti-patrones.**
 
 - ❌ Devolver la entidad Prisma directamente desde el controller — expone campos internos y acopla la API al schema de la DB
 - ❌ Manejar la omisión de campos con `delete entity.password` — mutable, frágil, y falla en modo estricto de TypeScript
 - ❌ Repetir el objeto `select` inline en cada query en lugar de usar una constante — cuando el shape cambia hay que actualizarlo en N lugares
-- ❌ Hacer la transformación en el servicio — el servicio debe devolver la entidad completa para que otros servicios (e.g. `AuthService`) puedan usarla sin restricciones
+- ❌ Hacer la transformación en el servicio cuando éste tiene callers internos — el servicio debe devolver la entidad completa para que otros servicios puedan usarla sin restricciones (e.g. `UsersService` es consumido por `AuthService` que necesita el `password`)
 - ❌ Usar `class-transformer` con `@Exclude()` en la entidad — agrega complejidad de configuración y no funciona sin `ClassSerializerInterceptor` global
 
 **Prompt reutilizable.**
@@ -2458,6 +2587,7 @@ Implementa Response DTOs para el módulo [nombre] en src/[nombre]/.
 - [ ] `@ApiProperty({ type: () => BasicDto })` en campos anidados — función lazy, no referencia directa
 - [ ] Arrays de DTOs usan `isArray: true` en `@ApiProperty`
 - [ ] La constante de select usa `as const` para que Prisma infiera el tipo de retorno
+- [ ] Si la transformación se hace en el servicio, confirmar que ningún otro servicio lo inyecta y necesita datos que el DTO no expone
 
 ---
 
@@ -2580,6 +2710,7 @@ taskkill /PID <numero> /F
 
 | Versión | Fecha | Cambios |
 |---------|-------|---------|
+| `2.4.0` | 2026-04-16 | **MINOR** — Capítulo 6.20 ampliado: variante de transformación en servicio, cuatro nuevos DTOs (RegisterResponseDto, ProfileResponseDto, OrderItemResponseDto, OrderResponseDto con código real), decisión de diseño createWithProfile ($transaction User+Profile vacío), gotcha #4, anti-patrón actualizado, ítem de code review. Índice: roadmap capítulos 6.21–6.24. CLAUDE.md: sección Response DTOs actualizada con Auth/Profile/Orders y patrón createWithProfile. |
 | `2.3.0` | 2026-04-14 | **MINOR** — Nuevo capítulo 6.20: Response DTOs (patrón de transformación en controllers, constantes de select con `as const`, BasicDto para entidades anidadas, Swagger con lazy reference). CLAUDE.md: nueva sección "Response DTOs" documentando el patrón implementado. |
 | `2.2.0` | 2026-04-13 | **MINOR** — Capítulos 6.14, 6.17 y 6.18 reemplazados con código real del proyecto (no reconstruido de memoria). Sección 4: flujo "siempre vía Claude Code" + nueva regla de leer archivos fuente. Nuevo capítulo 6.19: Máquina de estados de Order. Sección 7 expandida: 7.1 con fix documentado, 7.2 productos duplicados, 7.3 Float en dinero. Headings de sección 6 sin ⭐ (anchors de GitHub corregidos). Code fix: `http-exception.filter.ts` — mensaje 500 traducido al español. |
 | `2.1.0` | 2026-04-13 | **MINOR** — Migrados todos los capítulos pendientes al formato v2 estándar (6.1, 6.2, 6.3, 6.5–6.11, 6.13–6.18). Cada capítulo ahora incluye Concepto, Patrón base, Gotchas con 3 columnas, Anti-patrones, Prompt reutilizable y Code review específico. |

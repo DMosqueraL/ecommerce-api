@@ -455,7 +455,7 @@ export class UserResponseDto {
 
 Each DTO has a constructor that takes the Prisma-returned shape and maps fields explicitly. No class-transformer — transformation happens manually.
 
-**Controller transformation:**
+**Controller transformation (when service has internal callers):**
 
 ```typescript
 // Singular
@@ -463,6 +463,35 @@ return new UserResponseDto(user);
 
 // Paginated list — preserve pagination envelope, map only data
 return { ...result, data: result.data.map((u) => new UserResponseDto(u)) };
+```
+
+**Service transformation (when service has no internal callers):**
+
+When a service is consumed only by its own controller, the transformation can be done inside the service — the controller just returns what the service returns. Applied to Auth, Profile, and Orders modules. Not applied to Users because `AuthService` injects it and needs the full `User` (with `password`) to verify credentials.
+
+```typescript
+// In ProfileService / OrdersService — return DTO directly:
+return new ProfileResponseDto(profile);
+return new OrderResponseDto(order);
+
+// Paginated in OrdersService:
+return { data: data.map((o) => new OrderResponseDto(o)), total, page, limit, totalPages };
+```
+
+**Registration + automatic empty Profile (`createWithProfile`):**
+
+Every user gets a `Profile` row at registration time. `UsersService.createWithProfile` uses `$transaction` to create `User` + empty `Profile` atomically. `AuthService.register` calls this instead of plain `create`. `POST /profile/me` was removed — the profile already exists empty after registration; only `PATCH /profile/me` remains.
+
+```typescript
+async createWithProfile(data: CreateUserData) {
+  return this.prisma.$transaction(async (tx) => {
+    const user = await tx.user.create({ data });
+    await tx.profile.create({
+      data: { userId: user.id, phone: null, address: null, docType: null, docNumber: null },
+    });
+    return user;
+  });
+}
 ```
 
 **Nested entities — BasicDto convention:**
@@ -474,7 +503,9 @@ When entity A contains entity B, use a `BasicDto` for B to avoid circular refere
 
 For Swagger, nested DTOs use `@ApiProperty({ type: () => CategoryBasicDto })` (lazy reference) and arrays use `isArray: true`.
 
-**Modules implemented:** Users, Products, Categories.
+**Modules implemented (controller-level transformation):** Users, Products, Categories.
+
+**Modules implemented (service-level transformation):** Auth (`RegisterResponseDto`), Profile (`ProfileResponseDto`), Orders (`OrderResponseDto` + `OrderItemResponseDto`).
 
 ## Error response format
 

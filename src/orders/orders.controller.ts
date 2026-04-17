@@ -1,4 +1,14 @@
-import { Controller, Get, Post, Patch, Param, Body, Req, ParseIntPipe, Query } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Patch,
+  Param,
+  Body,
+  Req,
+  ParseIntPipe,
+  Query,
+} from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { OrdersService } from './orders.service';
 import { CreateOrderDto } from './dto/create-order.dto';
@@ -28,7 +38,13 @@ export class OrdersController {
     @Query('startDate') startDate?: string,
     @Query('endDate') endDate?: string,
   ) {
-    return this.ordersService.findAll(page, limit, { status, paymentMethod, startDate, endDate, userId });
+    return this.ordersService.findAll(page, limit, {
+      status,
+      paymentMethod,
+      startDate,
+      endDate,
+      userId,
+    });
   }
 
   @Roles('ADMIN', 'USER')
@@ -42,7 +58,12 @@ export class OrdersController {
     @Query('startDate') startDate?: string,
     @Query('endDate') endDate?: string,
   ) {
-    return this.ordersService.findMine(req.user.id, page, limit, { status, paymentMethod, startDate, endDate });
+    return this.ordersService.findMine(req.user.id, page, limit, {
+      status,
+      paymentMethod,
+      startDate,
+      endDate,
+    });
   }
 
   @Roles('ADMIN', 'USER')
@@ -53,7 +74,10 @@ export class OrdersController {
 
   @Roles('ADMIN')
   @Patch(':id/status')
-  updateStatus(@Param('id', ParseIntPipe) id: number, @Body() body: UpdateStatusDto) {
+  updateStatus(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: UpdateStatusDto,
+  ) {
     return this.ordersService.updateStatus(id, body);
   }
 }

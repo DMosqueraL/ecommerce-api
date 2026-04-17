@@ -25,6 +25,22 @@ export class UsersService {
     return this.prisma.user.create({ data });
   }
 
+  async createWithProfile(data: CreateUserData) {
+    return this.prisma.$transaction(async (tx) => {
+      const user = await tx.user.create({ data });
+      await tx.profile.create({
+        data: {
+          userId: user.id,
+          phone: null,
+          address: null,
+          docType: null,
+          docNumber: null,
+        },
+      });
+      return user;
+    });
+  }
+
   async findAll(page: number = 1, limit: number = 10) {
     const skip = (page - 1) * limit;
     const [users, total] = await Promise.all([

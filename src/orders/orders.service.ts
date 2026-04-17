@@ -9,6 +9,7 @@ import type { CreateOrderDto } from './dto/create-order.dto';
 import type { UpdateStatusDto } from './dto/update-status.dto';
 import { PaymentMethod, OrderStatus } from '../../generated/prisma/enums';
 import type { Product } from '../../generated/prisma/client';
+import { OrderResponseDto } from './dto/order-response.dto';
 
 const ITEMS_INCLUDE = { items: { include: { product: true } } };
 
@@ -59,7 +60,7 @@ export class OrdersService {
       }),
     );
 
-    return this.prisma.$transaction(async (tx) => {
+    const order = await this.prisma.$transaction(async (tx) => {
       const itemsData: Array<{
         productId: number;
         quantity: number;
@@ -114,7 +115,7 @@ export class OrdersService {
       const grandTotal = totalAmount + taxAmount + shippingCost;
 
       // Crear la orden con sus items anidados
-      const order = await tx.order.create({
+      const createdOrder = await tx.order.create({
         data: {
           userId,
           totalAmount,
@@ -140,8 +141,9 @@ export class OrdersService {
         });
       }
 
-      return order;
+      return createdOrder;
     });
+    return new OrderResponseDto(order);
   }
 
   private buildWhere(filters: OrderFilters & { userId?: number }) {
@@ -177,7 +179,13 @@ export class OrdersService {
       }),
       this.prisma.order.count({ where }),
     ]);
-    return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
+    return {
+      data: data.map((o) => new OrderResponseDto(o)),
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+    };
   }
 
   async findMine(
@@ -197,7 +205,13 @@ export class OrdersService {
       }),
       this.prisma.order.count({ where }),
     ]);
-    return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
+    return {
+      data: data.map((o) => new OrderResponseDto(o)),
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+    };
   }
 
   async findOne(id: number, requesterId: number, requesterRole: string) {
@@ -209,7 +223,7 @@ export class OrdersService {
       throw new NotFoundException(`Pedido con id ${id} no encontrado`);
     if (requesterRole !== 'ADMIN' && order.userId !== requesterId)
       throw new ForbiddenException('No tienes permisos para ver este pedido');
-    return order;
+    return new OrderResponseDto(order);
   }
 
   async updateStatus(id: number, dto: UpdateStatusDto) {
@@ -230,7 +244,7 @@ export class OrdersService {
 
     // Bug #4: cancelación devuelve stock en la misma transacción
     if (newStatus === OrderStatus.CANCELLED) {
-      return this.prisma.$transaction(async (tx) => {
+      const updated = await this.prisma.$transaction(async (tx) => {
         const items = await tx.orderItem.findMany({ where: { orderId: id } });
         for (const item of items) {
           await tx.product.update({
@@ -244,13 +258,15 @@ export class OrdersService {
           include: ITEMS_INCLUDE,
         });
       });
+      return new OrderResponseDto(updated);
     }
 
     // Transición no destructiva: simple update fuera de transacción
-    return this.prisma.order.update({
+    const updated = await this.prisma.order.update({
       where: { id },
       data: { status: newStatus },
       include: ITEMS_INCLUDE,
     });
+    return new OrderResponseDto(updated);
   }
 }
